@@ -49,9 +49,42 @@ export default function Login() {
   };
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg-primary)' }}>
+    <div className="login-container">
+      {/* Right Side: Image/Graphics (Now first in DOM for mobile sticky scroll) */}
+      <div className="login-hero">
+        {/* Background Image */}
+        <div style={{
+          position: 'absolute',
+          top: 0, left: 0, right: 0, bottom: 0,
+          backgroundImage: 'url(/gym-bg.jpg)',
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          filter: 'brightness(0.6) contrast(1.1)',
+        }}></div>
+        
+        {/* Overlay gradient */}
+        <div style={{
+          position: 'absolute',
+          top: 0, left: 0, right: 0, bottom: 0,
+          background: 'linear-gradient(135deg, rgba(18,18,18,0.8) 0%, rgba(255,123,84,0.1) 100%)',
+        }}></div>
+
+        <div className="login-hero-content" style={{ position: 'relative', zIndex: 1, textAlign: 'center', padding: '3rem' }}>
+          <h1 style={{ fontSize: '3rem', fontWeight: 800, color: '#fff', marginBottom: '1rem', textShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
+            Track Together.<br/>Grow Together.
+          </h1>
+          <p style={{ fontSize: '1.2rem', color: 'rgba(255,255,255,0.8)', maxWidth: '400px', margin: '0 auto' }}>
+            Stay consistent, push your limits, and celebrate PRs with your sibling.
+          </p>
+          <div className="mobile-scroll-indicator">
+            <p>Swipe up to login</p>
+            <div className="bounce-arrow">↓</div>
+          </div>
+        </div>
+      </div>
+
       {/* Left Side: Login */}
-      <div style={{ flex: '1', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
+      <div className="login-form-container">
         <div style={{ width: '100%', maxWidth: '400px' }}>
           <div className="flex flex-col mb-6">
             <div className="flex items-center gap-2 mb-2">
@@ -139,43 +172,6 @@ export default function Login() {
               </p>
             </div>
           </div>
-        </div>
-      </div>
-      
-      {/* Right Side: Image/Graphics */}
-      <div style={{ 
-        flex: '1.2', 
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        position: 'relative',
-        borderLeft: '1px solid var(--border-color)',
-        overflow: 'hidden'
-      }}>
-        {/* Background Image */}
-        <div style={{
-          position: 'absolute',
-          top: 0, left: 0, right: 0, bottom: 0,
-          backgroundImage: 'url(/gym-bg.jpg)',
-          backgroundSize: 'cover',
-          backgroundPosition: 'center',
-          filter: 'brightness(0.6) contrast(1.1)',
-        }}></div>
-        
-        {/* Overlay gradient */}
-        <div style={{
-          position: 'absolute',
-          top: 0, left: 0, right: 0, bottom: 0,
-          background: 'linear-gradient(135deg, rgba(18,18,18,0.8) 0%, rgba(255,123,84,0.1) 100%)',
-        }}></div>
-
-        <div style={{ position: 'relative', zIndex: 1, textAlign: 'center', padding: '3rem' }}>
-          <h1 style={{ fontSize: '3rem', fontWeight: 800, color: '#fff', marginBottom: '1rem', textShadow: '0 4px 12px rgba(0,0,0,0.5)' }}>
-            Track Together.<br/>Grow Together.
-          </h1>
-          <p style={{ fontSize: '1.2rem', color: 'rgba(255,255,255,0.8)', maxWidth: '400px', margin: '0 auto' }}>
-            Stay consistent, push your limits, and celebrate PRs with your sibling.
-          </p>
         </div>
       </div>
     </div>
