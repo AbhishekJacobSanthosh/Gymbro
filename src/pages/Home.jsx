@@ -17,7 +17,7 @@ export default function Home({ session }) {
   const [weight, setWeight] = useState('');
   const [weightData, setWeightData] = useState([]);
   const [activities, setActivities] = useState([]);
-  const [stats, setStats] = useState({ totalWorkouts: 0, currentStreak: 0, latestPR: 'None yet' });
+  const [stats, setStats] = useState({ totalWorkouts: 0, currentStreak: 0, weeklyGoal: '0 / 0' });
 
   useEffect(() => {
     setQuote(quotes[Math.floor(Math.random() * quotes.length)]);
@@ -61,46 +61,74 @@ export default function Home({ session }) {
       })));
     }
 
-    // Fetch Total Workouts & Calculate Streak
+    // Fetch all workouts to calculate stats
     const { data: allWorkouts } = await supabase
       .from('workouts')
-      .select('completed_at')
-      .eq('user_id', session.user.id)
-      .eq('completed', true)
-      .order('completed_at', { ascending: false });
+      .select('completed, completed_at, is_rest_day, day_of_week')
+      .eq('user_id', session.user.id);
 
     let streak = 0;
+    let totalWorkouts = 0;
+    let completedThisWeek = 0;
+    let goal = 0;
+
     if (allWorkouts && allWorkouts.length > 0) {
+      // 1. Calculate Weekly Goal (count newest templates that are not rest days)
+      const templates = allWorkouts.filter(w => w.completed === false);
+      templates.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); // newest first
+      
+      const templatesByDay = {};
+      templates.forEach(t => {
+        if (!templatesByDay[t.day_of_week]) {
+          templatesByDay[t.day_of_week] = t;
+        }
+      });
+      
+      goal = Object.values(templatesByDay).filter(t => t.is_rest_day === false).length;
+
+      // 2. Filter to only completed history for streak and progress
+      const completedHistory = allWorkouts
+        .filter(w => w.completed)
+        .sort((a, b) => new Date(b.completed_at) - new Date(a.completed_at));
+
+      totalWorkouts = completedHistory.length;
+
+      // 3. Calculate this week's progress (starting Monday)
       const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      
-      let checkDate = new Date(today);
-      
-      // Check if they worked out today or yesterday to start the streak count
-      const firstWorkoutDate = new Date(allWorkouts[0].completed_at);
-      firstWorkoutDate.setHours(0,0,0,0);
-      
-      const diffTime = Math.abs(today - firstWorkoutDate);
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      
-      if (diffDays <= 1) {
-        // They have an active streak! Let's count backwards
-        let currentCheckDate = new Date(firstWorkoutDate);
+      const currentDay = today.getDay();
+      const distanceToMonday = currentDay === 0 ? 6 : currentDay - 1;
+      const startOfWeek = new Date(today);
+      startOfWeek.setDate(today.getDate() - distanceToMonday);
+      startOfWeek.setHours(0, 0, 0, 0);
+
+      completedThisWeek = completedHistory.filter(w => new Date(w.completed_at) >= startOfWeek).length;
+
+      // 4. Calculate Streak
+      if (completedHistory.length > 0) {
+        today.setHours(0, 0, 0, 0);
+        let currentCheckDate = new Date(today);
         
-        for (let i = 0; i < allWorkouts.length; i++) {
-          const wDate = new Date(allWorkouts[i].completed_at);
-          wDate.setHours(0,0,0,0);
+        const firstWorkoutDate = new Date(completedHistory[0].completed_at);
+        firstWorkoutDate.setHours(0,0,0,0);
+        
+        const diffTime = Math.abs(today - firstWorkoutDate);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        
+        if (diffDays <= 1) {
+          currentCheckDate = new Date(firstWorkoutDate);
           
-          if (wDate.getTime() === currentCheckDate.getTime()) {
-            streak++;
-            // Move check date back 1 day for next iteration
-            currentCheckDate.setDate(currentCheckDate.getDate() - 1);
-          } else if (wDate.getTime() > currentCheckDate.getTime()) {
-            // Multiple workouts on same day, ignore
-            continue;
-          } else {
-            // Streak broken
-            break;
+          for (let i = 0; i < completedHistory.length; i++) {
+            const wDate = new Date(completedHistory[i].completed_at);
+            wDate.setHours(0,0,0,0);
+            
+            if (wDate.getTime() === currentCheckDate.getTime()) {
+              streak++;
+              currentCheckDate.setDate(currentCheckDate.getDate() - 1);
+            } else if (wDate.getTime() > currentCheckDate.getTime()) {
+              continue;
+            } else {
+              break;
+            }
           }
         }
       }
@@ -108,8 +136,9 @@ export default function Home({ session }) {
 
     setStats(prev => ({ 
       ...prev, 
-      totalWorkouts: allWorkouts ? allWorkouts.length : 0,
-      currentStreak: streak
+      totalWorkouts,
+      currentStreak: streak,
+      weeklyGoal: `${completedThisWeek} / ${goal || 0}`
     }));
   };
 
@@ -153,8 +182,8 @@ export default function Home({ session }) {
         </div>
         <div className="card flex items-center justify-between" style={{ flex: '1 1 150px', padding: '1rem 1.5rem' }}>
           <div>
-            <p className="text-muted" style={{ fontSize: '0.85rem' }}>Latest PR</p>
-            <p style={{ fontSize: '1.5rem', fontWeight: 700 }}>{stats.latestPR}</p>
+            <p className="text-muted" style={{ fontSize: '0.85rem' }}>Weekly Goal</p>
+            <p style={{ fontSize: '1.5rem', fontWeight: 700 }}>{stats.weeklyGoal}</p>
           </div>
           <Trophy size={32} style={{ color: '#FFD700', opacity: 0.8 }} />
         </div>

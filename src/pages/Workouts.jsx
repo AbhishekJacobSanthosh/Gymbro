@@ -146,40 +146,67 @@ export default function Workouts({ session }) {
                       key={ex.id} 
                       className="flex items-center justify-between"
                       style={{ 
-                        padding: '1rem',
-                        backgroundColor: 'var(--bg-elevated)', 
-                        borderRadius: 'var(--border-radius)',
-                        border: ex.completed ? '1px solid var(--success-color)' : '1px solid var(--border-color)',
-                        opacity: ex.completed ? 0.7 : 1,
+                        padding: '1.25rem 0',
+                        borderBottom: '1px solid var(--border-color)',
+                        opacity: ex.completed ? 0.5 : 1,
                         transition: 'var(--transition)'
                       }}
                     >
-                      <div className="flex flex-col gap-2" style={{ flex: 1 }}>
-                        <h3 style={{ fontSize: '1.1rem', fontWeight: 600, textDecoration: ex.completed ? 'line-through' : 'none' }}>{ex.name}</h3>
+                      <div className="flex flex-col gap-1" style={{ flex: 1 }}>
+                        <h3 style={{ 
+                          fontSize: '1.15rem', 
+                          fontWeight: 600, 
+                          color: ex.completed ? 'var(--text-muted)' : 'var(--text-primary)', 
+                          textDecoration: ex.completed ? 'line-through' : 'none' 
+                        }}>
+                          {ex.name}
+                        </h3>
                         
-                        <div className="flex gap-4 items-center text-sm text-muted">
-                          <span style={{ minWidth: '50px' }}><strong>Sets:</strong> {ex.sets}</span>
+                        <div className="flex items-center gap-3 text-sm text-muted mt-1" style={{ flexWrap: 'wrap' }}>
+                          <span style={{ fontWeight: 500 }}>{ex.sets} Sets</span>
+                          <span style={{ opacity: 0.3 }}>•</span>
                           
                           <div className="flex items-center gap-1">
-                            <strong>Reps:</strong> 
                             <input 
                               type="text" 
                               value={ex.reps}
                               onChange={e => handleLocalChange(ex.id, 'reps', e.target.value)}
                               onBlur={e => handleBlurSave(ex.id, 'reps', e.target.value)}
-                              style={{ width: '60px', padding: '0.2rem 0.4rem', backgroundColor: 'var(--bg-secondary)' }}
+                              style={{ 
+                                width: '45px', 
+                                padding: '0.2rem 0', 
+                                backgroundColor: 'transparent', 
+                                border: 'none',
+                                borderBottom: '1px solid var(--text-muted)',
+                                borderRadius: 0,
+                                textAlign: 'center',
+                                color: 'var(--text-primary)',
+                                fontWeight: 600
+                              }}
                             />
+                            <span>Reps</span>
                           </div>
                           
+                          <span style={{ opacity: 0.3 }}>•</span>
+                          
                           <div className="flex items-center gap-1">
-                            <strong>Wt:</strong> 
                             <input 
                               type="number" 
                               step="0.5"
                               value={ex.weight}
                               onChange={e => handleLocalChange(ex.id, 'weight', e.target.value)}
                               onBlur={e => handleBlurSave(ex.id, 'weight', e.target.value)}
-                              style={{ width: '70px', padding: '0.2rem 0.4rem', backgroundColor: 'var(--bg-secondary)' }}
+                              style={{ 
+                                width: '50px', 
+                                padding: '0.2rem 0', 
+                                backgroundColor: 'transparent', 
+                                border: 'none',
+                                borderBottom: '1px solid var(--text-muted)',
+                                borderRadius: 0,
+                                textAlign: 'center',
+                                color: 'var(--text-primary)',
+                                fontWeight: 600
+                              }}
                             />
                             <span>kg</span>
                           </div>
@@ -188,14 +215,17 @@ export default function Workouts({ session }) {
                       
                       <button 
                         onClick={() => toggleComplete(ex.id, ex.completed)}
-                        className="btn"
                         style={{ 
-                          padding: '0.5rem', 
+                          width: '36px', height: '36px',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
                           backgroundColor: ex.completed ? 'var(--success-color)' : 'transparent',
-                          border: `1px solid ${ex.completed ? 'var(--success-color)' : 'var(--text-secondary)'}`,
-                          color: ex.completed ? '#fff' : 'var(--text-secondary)',
+                          border: `2px solid ${ex.completed ? 'var(--success-color)' : 'var(--border-color)'}`,
+                          color: ex.completed ? '#fff' : 'transparent',
                           borderRadius: '50%',
-                          marginLeft: '1rem'
+                          cursor: 'pointer',
+                          transition: 'all 0.2s',
+                          marginLeft: '1rem',
+                          flexShrink: 0
                         }}
                       >
                         <Check size={20} />
