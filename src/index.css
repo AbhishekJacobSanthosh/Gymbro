@@ -199,26 +199,47 @@ input:focus, select:focus, textarea:focus {
     flex-direction: column;
   }
   .sidebar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
     width: 100%;
+    height: 70px;
     border-right: none;
-    border-bottom: 1px solid var(--border-color);
-    padding: 1rem;
+    border-top: 1px solid var(--border-color);
+    padding: 0;
     flex-direction: row;
-    justify-content: space-between;
+    justify-content: space-around;
     align-items: center;
+    z-index: 100;
+    background-color: var(--bg-secondary);
+    /* Safe area padding for iPhone home indicator */
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .sidebar > .flex.items-center {
+    display: none; /* Hide Logo on mobile */
   }
   .sidebar-nav {
     margin-top: 0;
     flex-direction: row;
-    gap: 0.25rem;
+    gap: 0;
+    width: 100%;
+    justify-content: space-evenly;
+  }
+  .sidebar > div:last-child {
+    display: none; /* Hide Sign Out container from bottom bar (we can move it to profile page later) */
   }
   .nav-item {
+    flex-direction: column;
+    gap: 4px;
     padding: 0.5rem;
+    font-size: 0.65rem;
+    color: var(--text-muted);
   }
   .nav-item span {
-    display: none; /* Hide text on small screens, just show icons */
+    display: block; /* Show tiny text under icons */
   }
   .main-content {
     padding: 1rem;
+    padding-bottom: 90px; /* Space for bottom bar */
   }
 }
