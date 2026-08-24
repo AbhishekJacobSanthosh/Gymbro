@@ -194,32 +194,38 @@ input:focus, select:focus, textarea:focus {
 .gap-4 { gap: 1rem; }
 /* Login Layout Styles */
 .login-container {
-  display: flex;
-  flex-direction: row;
-  min-height: 100vh;
-  background-color: var(--bg-primary);
-}
-
-.login-form-container {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2rem;
+  display: block; /* Disable flex so scrolling works naturally over sticky */
 }
 
 .login-hero {
-  flex: 1.2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  width: 100%;
+  height: 100vh;
+  position: sticky;
+  top: 0;
+  z-index: 0;
+}
+
+.login-hero-content {
+  padding-top: 25vh !important;
+}
+
+.login-form-container {
+  width: 100%;
+  min-height: 100vh;
   position: relative;
-  border-left: 1px solid var(--border-color);
-  overflow: hidden;
+  z-index: 10;
+  background-color: var(--bg-primary);
+  border-top-left-radius: 40px;
+  border-top-right-radius: 40px;
+  box-shadow: 0 -15px 40px rgba(0,0,0,0.5);
+  margin-top: -10vh; /* Pull it up slightly so they see the curve */
+  padding-top: 3rem !important;
+  display: flex;
+  justify-content: center; /* Center the form horizontally on desktop */
 }
 
 .mobile-scroll-indicator {
-  display: none;
+  display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
@@ -294,35 +300,6 @@ input:focus, select:focus, textarea:focus {
     padding-bottom: 90px; /* Space for bottom bar */
   }
 
-  /* Mobile Login Overhaul */
-  .login-container {
-    flex-direction: column;
-    display: block; /* Disable flex so scrolling works naturally over sticky */
-  }
-  .login-hero {
-    width: 100%;
-    height: 100vh;
-    position: sticky;
-    top: 0;
-    z-index: 0;
-  }
-  .login-hero-content {
-    padding-top: 25vh !important;
-  }
-  .mobile-scroll-indicator {
-    display: flex;
-  }
-  .login-form-container {
-    width: 100%;
-    min-height: 100vh;
-    position: relative;
-    z-index: 10;
-    background-color: var(--bg-primary);
-    border-top-left-radius: 40px;
-    border-top-right-radius: 40px;
-    box-shadow: 0 -15px 40px rgba(0,0,0,0.5);
-    margin-top: -10vh; /* Pull it up slightly so they see the curve */
-    padding-top: 3rem !important;
-  }
+
 }
 
