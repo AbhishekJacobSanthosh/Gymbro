@@ -137,7 +137,14 @@ export default function Calendar({ session }) {
     if (templates && templates.length > 0) {
       const template = templates[0];
       setActiveTemplate(template);
-      const formattedExercises = (template.exercises || []).map(ex => ({
+      
+      const { data: exData } = await supabase
+        .from('exercises')
+        .select('*')
+        .eq('workout_id', template.id)
+        .order('created_at', { ascending: true });
+        
+      const formattedExercises = (exData || []).map(ex => ({
         ...ex,
         completed: false
       }));
@@ -165,13 +172,17 @@ export default function Calendar({ session }) {
     if (!activeTemplate) return;
     setSaving(true);
     
-    // Save updated exercises to template first
-    const exercisesToSave = dayExercises.map(({ completed, ...rest }) => rest);
-    
-    await supabase
-      .from('workouts')
-      .update({ exercises: exercisesToSave })
-      .eq('id', activeTemplate.id);
+    // Save updated exercises (reps and weights for progressive overload) and reset completed status
+    for (const ex of dayExercises) {
+      await supabase
+        .from('exercises')
+        .update({ 
+          reps: ex.reps, 
+          weight: parseFloat(ex.weight) || 0,
+          completed: false 
+        })
+        .eq('id', ex.id);
+    }
 
     // Build the completed_at ISO string using the selected date but keeping a default noon time to avoid timezone edge cases
     const localDate = new Date(selectedDate);
