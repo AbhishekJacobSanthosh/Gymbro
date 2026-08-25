@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, CheckCircle, Flame, User, Loader2 } from 'lucide-react';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, CheckCircle, Flame, User, Loader2, X, Check } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 export default function Calendar({ session }) {
@@ -22,6 +22,14 @@ export default function Calendar({ session }) {
   });
 
   const [activityData, setActivityData] = useState({});
+
+  // Modal State
+  const [modalOpen, setModalOpen] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(null);
+  const [dayExercises, setDayExercises] = useState([]);
+  const [activeTemplate, setActiveTemplate] = useState(null);
+  const [modalLoading, setModalLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     fetchCalendarData();
@@ -101,6 +109,86 @@ export default function Calendar({ session }) {
     setLoading(false);
   };
 
+  const handleDayClick = async (day) => {
+    const clickedDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    
+    if (clickedDate > today) {
+      alert("You cannot log a workout in the future!");
+      return;
+    }
+    
+    setSelectedDate(clickedDate);
+    setModalOpen(true);
+    setModalLoading(true);
+    
+    const dayOfWeekStr = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][clickedDate.getDay()];
+    
+    const { data: templates } = await supabase
+      .from('workouts')
+      .select('*')
+      .eq('user_id', session.user.id)
+      .eq('day_of_week', dayOfWeekStr)
+      .eq('completed', false)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (templates && templates.length > 0) {
+      const template = templates[0];
+      setActiveTemplate(template);
+      const formattedExercises = (template.exercises || []).map(ex => ({
+        ...ex,
+        completed: false
+      }));
+      setDayExercises(formattedExercises);
+    } else {
+      setActiveTemplate(null);
+      setDayExercises([]);
+    }
+    setModalLoading(false);
+  };
+
+  const handleLocalChange = (exId, field, value) => {
+    setDayExercises(prev => prev.map(ex => 
+      ex.id === exId ? { ...ex, [field]: value } : ex
+    ));
+  };
+
+  const toggleComplete = (exId, currentStatus) => {
+    setDayExercises(prev => prev.map(ex => 
+      ex.id === exId ? { ...ex, completed: !currentStatus } : ex
+    ));
+  };
+
+  const finishRetroactiveWorkout = async () => {
+    if (!activeTemplate) return;
+    setSaving(true);
+    
+    // Save updated exercises to template first
+    const exercisesToSave = dayExercises.map(({ completed, ...rest }) => rest);
+    
+    await supabase
+      .from('workouts')
+      .update({ exercises: exercisesToSave })
+      .eq('id', activeTemplate.id);
+
+    // Build the completed_at ISO string using the selected date but keeping a default noon time to avoid timezone edge cases
+    const localDate = new Date(selectedDate);
+    localDate.setHours(12, 0, 0, 0);
+
+    // Mark as completed
+    await supabase
+      .from('workouts')
+      .update({ completed: true, completed_at: localDate.toISOString() })
+      .eq('id', activeTemplate.id);
+
+    // Refresh Calendar
+    await fetchCalendarData();
+    setModalOpen(false);
+    setSaving(false);
+  };
+
   return (
     <div className="flex flex-col gap-4">
       <header className="page-header mb-2">
@@ -158,6 +246,7 @@ export default function Calendar({ session }) {
                 return (
                   <div 
                     key={day} 
+                    onClick={() => handleDayClick(day)}
                     style={{ 
                       padding: '1rem 0',
                       borderRadius: 'var(--border-radius)',
@@ -165,8 +254,12 @@ export default function Calendar({ session }) {
                       border: isToday ? '2px solid var(--accent-primary)' : hasActivity ? '1px solid var(--border-color)' : '1px solid transparent',
                       color: hasActivity ? 'var(--text-primary)' : 'var(--text-secondary)',
                       fontWeight: hasActivity || isToday ? 'bold' : 'normal',
-                      position: 'relative'
+                      position: 'relative',
+                      cursor: 'pointer',
+                      transition: 'var(--transition)'
                     }}
+                    onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-elevated)'}
+                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = hasActivity ? 'var(--bg-elevated)' : 'transparent'}
                   >
                     {day}
                     <div style={{ display: 'flex', justifyContent: 'center', gap: '4px', marginTop: '4px', height: '6px' }}>
@@ -231,6 +324,94 @@ export default function Calendar({ session }) {
 
         </div>
       </div>
+
+      {/* Retroactive Logging Modal */}
+      {modalOpen && (
+        <div style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.8)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '1rem'
+        }}>
+          <div className="card" style={{ width: '100%', maxWidth: '600px', maxHeight: '90vh', overflowY: 'auto', position: 'relative' }}>
+            <button 
+              onClick={() => setModalOpen(false)}
+              style={{ position: 'absolute', top: '1rem', right: '1rem', background: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
+            >
+              <X size={24} />
+            </button>
+            
+            <h2 className="page-title mb-1">Log Workout</h2>
+            <p className="text-muted mb-4">{selectedDate?.toDateString()}</p>
+
+            {modalLoading ? (
+              <div className="flex justify-center p-8"><Loader2 className="animate-spin text-accent" size={32} /></div>
+            ) : !activeTemplate ? (
+              <div className="p-4 text-center text-muted">No template found for this day. Go to the Planner to create one first.</div>
+            ) : activeTemplate.is_rest_day ? (
+              <div className="p-4 text-center text-muted">This day was scheduled as a Rest Day.</div>
+            ) : dayExercises.length === 0 ? (
+              <div className="p-4 text-center text-muted">No exercises in this template. Add them in the Planner first.</div>
+            ) : (
+              <div className="flex flex-col gap-4">
+                {dayExercises.map(ex => (
+                  <div key={ex.id} className="flex items-center justify-between" style={{ padding: '1rem 0', borderBottom: '1px solid var(--border-color)', opacity: ex.completed ? 0.5 : 1 }}>
+                    <div className="flex flex-col gap-1" style={{ flex: 1 }}>
+                      <h3 style={{ fontSize: '1.15rem', fontWeight: 600, color: ex.completed ? 'var(--text-muted)' : 'var(--text-primary)', textDecoration: ex.completed ? 'line-through' : 'none' }}>
+                        {ex.name}
+                      </h3>
+                      <div className="flex items-center gap-3 text-sm text-muted mt-1" style={{ flexWrap: 'wrap' }}>
+                        <span style={{ fontWeight: 500 }}>{ex.sets} Sets</span>
+                        <span style={{ opacity: 0.3 }}>•</span>
+                        <div className="flex items-center gap-1">
+                          <input 
+                            type="text" 
+                            value={ex.reps}
+                            onChange={e => handleLocalChange(ex.id, 'reps', e.target.value)}
+                            style={{ width: '45px', padding: '0.2rem 0', backgroundColor: 'transparent', border: 'none', borderBottom: '1px solid var(--text-muted)', textAlign: 'center', color: 'var(--text-primary)', fontWeight: 600 }}
+                          />
+                          <span>Reps</span>
+                        </div>
+                        <span style={{ opacity: 0.3 }}>•</span>
+                        <div className="flex items-center gap-1">
+                          <input 
+                            type="number" 
+                            step="0.5"
+                            value={ex.weight}
+                            onChange={e => handleLocalChange(ex.id, 'weight', e.target.value)}
+                            style={{ width: '50px', padding: '0.2rem 0', backgroundColor: 'transparent', border: 'none', borderBottom: '1px solid var(--text-muted)', textAlign: 'center', color: 'var(--text-primary)', fontWeight: 600 }}
+                          />
+                          <span>kg</span>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <button 
+                      onClick={() => toggleComplete(ex.id, ex.completed)}
+                      style={{ width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: ex.completed ? 'var(--success-color)' : 'transparent', border: `2px solid ${ex.completed ? 'var(--success-color)' : 'var(--border-color)'}`, color: ex.completed ? '#fff' : 'transparent', borderRadius: '50%', cursor: 'pointer', transition: 'all 0.2s', marginLeft: '1rem', flexShrink: 0 }}
+                    >
+                      <Check size={20} />
+                    </button>
+                  </div>
+                ))}
+
+                <button 
+                  onClick={finishRetroactiveWorkout}
+                  disabled={saving || !dayExercises.every(ex => ex.completed)}
+                  className="btn btn-primary mt-4 w-full"
+                  style={{ padding: '1rem', fontSize: '1.1rem', opacity: (!dayExercises.every(ex => ex.completed)) ? 0.5 : 1 }}
+                >
+                  {saving ? 'Saving...' : 'Finish Workout'}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
