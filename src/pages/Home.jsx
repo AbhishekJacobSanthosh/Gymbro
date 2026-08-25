@@ -93,12 +93,11 @@ export default function Home({ session }) {
 
       totalWorkouts = completedHistory.length;
 
-      // 3. Calculate this week's progress (starting Monday)
+      // 3. Calculate this week's progress (starting Sunday to match planner)
       const today = new Date();
-      const currentDay = today.getDay();
-      const distanceToMonday = currentDay === 0 ? 6 : currentDay - 1;
+      const currentDay = today.getDay(); // 0 is Sunday
       const startOfWeek = new Date(today);
-      startOfWeek.setDate(today.getDate() - distanceToMonday);
+      startOfWeek.setDate(today.getDate() - currentDay);
       startOfWeek.setHours(0, 0, 0, 0);
 
       completedThisWeek = completedHistory.filter(w => new Date(w.completed_at) >= startOfWeek).length;
