@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { supabase } from '../lib/supabase';
-import { TrendingDown, Quote, Activity, Trophy, Flame, CheckCircle } from 'lucide-react';
+import { TrendingDown, Activity, Trophy, Flame, CheckCircle } from 'lucide-react';
 
 const quotes = [
   "The only bad workout is the one that didn't happen.",
@@ -12,20 +12,91 @@ const quotes = [
   "Motivation is what gets you started. Habit is what keeps you going."
 ];
 
+function getGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function getRelativeTime(dateStr) {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now - date;
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return date.toLocaleDateString();
+}
+
+const CustomTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{
+      backgroundColor: 'var(--bg-elevated)',
+      border: '1px solid var(--border)',
+      borderRadius: 'var(--radius-sm)',
+      padding: '0.5rem 0.75rem',
+      boxShadow: 'var(--shadow-md)',
+    }}>
+      <p style={{ color: 'var(--text-tertiary)', fontSize: '0.6875rem', marginBottom: '0.125rem' }}>{label}</p>
+      <p style={{ color: 'var(--accent)', fontSize: '0.9375rem', fontWeight: 600 }}>{payload[0].value} kg</p>
+    </div>
+  );
+};
+
 export default function Home({ session }) {
   const [quote, setQuote] = useState('');
   const [weight, setWeight] = useState('');
   const [weightData, setWeightData] = useState([]);
   const [activities, setActivities] = useState([]);
   const [stats, setStats] = useState({ totalWorkouts: 0, currentStreak: 0, weeklyGoal: '0 / 0' });
+  const [displayName, setDisplayName] = useState('');
+
+  const [todayTemplate, setTodayTemplate] = useState(null);
 
   useEffect(() => {
     setQuote(quotes[Math.floor(Math.random() * quotes.length)]);
     fetchData();
+    fetchProfile();
   }, [session]);
+
+  const fetchProfile = async () => {
+    if (!session?.user) return;
+    const { data } = await supabase
+      .from('profiles')
+      .select('display_name')
+      .eq('id', session.user.id)
+      .single();
+    if (data) setDisplayName(data.display_name || '');
+  };
 
   const fetchData = async () => {
     if (!session?.user) return;
+
+    // Fetch Today's Plan
+    const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const todayName = DAYS[new Date().getDay()];
+    
+    const { data: templateData } = await supabase
+      .from('workouts')
+      .select('*, exercises(*)')
+      .eq('user_id', session.user.id)
+      .eq('day_of_week', todayName)
+      .eq('completed', false)
+      .order('created_at', { ascending: false })
+      .limit(1);
+      
+    if (templateData && templateData.length > 0) {
+      setTodayTemplate(templateData[0]);
+    } else {
+      setTodayTemplate(null);
+    }
 
     // Fetch Weight Logs
     const { data: weights } = await supabase
@@ -57,14 +128,14 @@ export default function Home({ session }) {
         id: a.id,
         user: a.profiles.display_name,
         action: a.action,
-        time: new Date(a.created_at).toLocaleDateString()
+        time: getRelativeTime(a.created_at)
       })));
     }
 
     // Fetch all workouts to calculate stats
     const { data: allWorkouts } = await supabase
       .from('workouts')
-      .select('completed, completed_at, is_rest_day, day_of_week')
+      .select('completed, completed_at, is_rest_day, day_of_week, created_at')
       .eq('user_id', session.user.id);
 
     let streak = 0;
@@ -76,14 +147,14 @@ export default function Home({ session }) {
       // 1. Calculate Weekly Goal (count newest templates that are not rest days)
       const templates = allWorkouts.filter(w => w.completed === false);
       templates.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); // newest first
-      
+
       const templatesByDay = {};
       templates.forEach(t => {
         if (!templatesByDay[t.day_of_week]) {
           templatesByDay[t.day_of_week] = t;
         }
       });
-      
+
       goal = Object.values(templatesByDay).filter(t => t.is_rest_day === false).length;
 
       // 2. Filter to only completed history for streak and progress
@@ -106,20 +177,20 @@ export default function Home({ session }) {
       if (completedHistory.length > 0) {
         today.setHours(0, 0, 0, 0);
         let currentCheckDate = new Date(today);
-        
+
         const firstWorkoutDate = new Date(completedHistory[0].completed_at);
-        firstWorkoutDate.setHours(0,0,0,0);
-        
+        firstWorkoutDate.setHours(0, 0, 0, 0);
+
         const diffTime = Math.abs(today - firstWorkoutDate);
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        
+
         if (diffDays <= 1) {
           currentCheckDate = new Date(firstWorkoutDate);
-          
+
           for (let i = 0; i < completedHistory.length; i++) {
             const wDate = new Date(completedHistory[i].completed_at);
-            wDate.setHours(0,0,0,0);
-            
+            wDate.setHours(0, 0, 0, 0);
+
             if (wDate.getTime() === currentCheckDate.getTime()) {
               streak++;
               currentCheckDate.setDate(currentCheckDate.getDate() - 1);
@@ -133,8 +204,8 @@ export default function Home({ session }) {
       }
     }
 
-    setStats(prev => ({ 
-      ...prev, 
+    setStats(prev => ({
+      ...prev,
       totalWorkouts,
       currentStreak: streak,
       weeklyGoal: `${completedThisWeek} / ${goal || 0}`
@@ -144,7 +215,7 @@ export default function Home({ session }) {
   const handleWeightSubmit = async (e) => {
     e.preventDefault();
     if (!weight) return;
-    
+
     const { error } = await supabase.from('weight_logs').insert([{
       user_id: session.user.id,
       weight: parseFloat(weight)
@@ -156,97 +227,197 @@ export default function Home({ session }) {
     }
   };
 
+  const greeting = getGreeting();
+
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex-col gap-6 stagger-children" style={{ display: 'flex' }}>
+      {/* Header */}
       <header className="page-header">
-        <h1 className="page-title">Welcome back!</h1>
-        <p className="text-muted">Let's get after it today.</p>
+        <h1 className="page-title">{greeting}{displayName ? `, ${displayName}` : ''}!</h1>
+        <p className="page-subtitle">Let's get after it today.</p>
       </header>
-      
+
       {/* Quick Stats */}
-      <div className="flex gap-4 mb-2" style={{ flexWrap: 'wrap' }}>
-        <div className="card flex items-center justify-between" style={{ flex: '1 1 150px', padding: '1rem 1.5rem' }}>
+      <div className="stats-scroll" style={{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap' }}>
+        <div className="stat-card" style={{ flex: '1 1 180px' }}>
           <div>
-            <p className="text-muted" style={{ fontSize: '0.85rem' }}>Total Workouts</p>
-            <p style={{ fontSize: '1.5rem', fontWeight: 700 }}>{stats.totalWorkouts}</p>
+            <p className="stat-label">Total Workouts</p>
+            <p className="stat-value">{stats.totalWorkouts}</p>
           </div>
-          <CheckCircle size={32} className="text-success" style={{ color: 'var(--success-color)', opacity: 0.8 }} />
+          <div className="stat-icon" style={{ backgroundColor: 'var(--success-soft)' }}>
+            <CheckCircle size={22} style={{ color: 'var(--success)' }} />
+          </div>
         </div>
-        <div className="card flex items-center justify-between" style={{ flex: '1 1 150px', padding: '1rem 1.5rem' }}>
+        <div className="stat-card" style={{ flex: '1 1 180px' }}>
           <div>
-            <p className="text-muted" style={{ fontSize: '0.85rem' }}>Current Streak</p>
-            <p style={{ fontSize: '1.5rem', fontWeight: 700 }}>{stats.currentStreak} Days</p>
+            <p className="stat-label">Current Streak</p>
+            <p className="stat-value">{stats.currentStreak} Days</p>
           </div>
-          <Flame size={32} className="text-accent" style={{ opacity: 0.8 }} />
+          <div className="stat-icon" style={{ backgroundColor: 'var(--accent-soft)' }}>
+            <Flame size={22} style={{ color: 'var(--accent)' }} />
+          </div>
         </div>
-        <div className="card flex items-center justify-between" style={{ flex: '1 1 150px', padding: '1rem 1.5rem' }}>
+        <div className="stat-card" style={{ flex: '1 1 180px' }}>
           <div>
-            <p className="text-muted" style={{ fontSize: '0.85rem' }}>Weekly Goal</p>
-            <p style={{ fontSize: '1.5rem', fontWeight: 700 }}>{stats.weeklyGoal}</p>
+            <p className="stat-label">Weekly Goal</p>
+            <p className="stat-value">{stats.weeklyGoal}</p>
           </div>
-          <Trophy size={32} style={{ color: '#FFD700', opacity: 0.8 }} />
+          <div className="stat-icon" style={{ backgroundColor: 'var(--warning-soft)' }}>
+            <Trophy size={22} style={{ color: 'var(--warning)' }} />
+          </div>
         </div>
       </div>
-      
-      <div className="card" style={{ borderLeft: '4px solid var(--accent-primary)', position: 'relative' }}>
-        <Quote size={24} className="text-accent mb-2" style={{ opacity: 0.5 }} />
-        <p style={{ fontStyle: 'italic', fontSize: '1.1rem' }}>"{quote}"</p>
+
+      {/* Quote */}
+      <div className="card quote-card">
+        <p style={{ fontStyle: 'italic', fontSize: '1rem', color: 'var(--text-secondary)', lineHeight: 1.6, position: 'relative', zIndex: 1 }}>
+          "{quote}"
+        </p>
       </div>
-      
-      <div className="flex gap-4" style={{ flexWrap: 'wrap' }}>
-        <div className="card" style={{ flex: '1 1 300px' }}>
-          <div className="flex items-center gap-2 mb-4">
-            <TrendingDown className="text-accent" />
-            <h2 style={{ fontSize: '1.2rem' }}>Weight Tracker</h2>
+
+      {/* Charts & Activity */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--space-5)' }}>
+        {/* Weight Tracker */}
+        <div className="card">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="stat-icon" style={{ backgroundColor: 'var(--accent-soft)', width: '36px', height: '36px' }}>
+              <TrendingDown size={18} style={{ color: 'var(--accent)' }} />
+            </div>
+            <h2 style={{ fontSize: '1.0625rem', fontWeight: 600 }}>Weight Tracker</h2>
           </div>
-          
-          <form onSubmit={handleWeightSubmit} className="flex gap-2 mb-4">
-            <input 
-              type="number" 
-              step="0.1" 
-              placeholder="Current weight (kg/lbs)" 
+
+          <form onSubmit={handleWeightSubmit} className="flex gap-2 mb-5">
+            <input
+              type="number"
+              step="0.1"
+              placeholder="Current weight (kg/lbs)"
               value={weight}
               onChange={(e) => setWeight(e.target.value)}
+              style={{ flex: 1 }}
             />
             <button type="submit" className="btn btn-primary">Log</button>
           </form>
-          
-          <div style={{ height: '200px', width: '100%', marginTop: '1rem' }}>
+
+          <div style={{ height: '200px', width: '100%' }}>
             {weightData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={weightData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
-                  <XAxis dataKey="date" stroke="var(--text-secondary)" />
-                  <YAxis domain={['dataMin - 1', 'dataMax + 1']} stroke="var(--text-secondary)" />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: 'var(--bg-elevated)', border: 'none', borderRadius: '8px' }}
-                    itemStyle={{ color: 'var(--accent-primary)' }}
+                <AreaChart data={weightData}>
+                  <defs>
+                    <linearGradient id="weightGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.25} />
+                      <stop offset="100%" stopColor="var(--accent)" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="lineGradient" x1="0" y1="0" x2="1" y2="0">
+                      <stop offset="0%" stopColor="#ff7854" />
+                      <stop offset="100%" stopColor="#ffb347" />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                  <XAxis dataKey="date" stroke="var(--text-quaternary)" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis domain={['dataMin - 1', 'dataMax + 1']} stroke="var(--text-quaternary)" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} width={40} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Area
+                    type="monotone"
+                    dataKey="weight"
+                    stroke="url(#lineGradient)"
+                    strokeWidth={2.5}
+                    fill="url(#weightGradient)"
+                    dot={{ r: 3, fill: 'var(--accent)', stroke: 'var(--bg-surface)', strokeWidth: 2 }}
+                    activeDot={{ r: 5, fill: 'var(--accent)', stroke: 'var(--bg-surface)', strokeWidth: 2 }}
                   />
-                  <Line type="monotone" dataKey="weight" stroke="var(--accent-primary)" strokeWidth={3} dot={{ r: 4, fill: 'var(--accent-primary)' }} />
-                </LineChart>
+                </AreaChart>
               </ResponsiveContainer>
             ) : (
-              <div className="flex items-center justify-center h-full text-muted">No weight data logged yet.</div>
+              <div className="empty-state" style={{ padding: 'var(--space-8) var(--space-4)' }}>
+                <TrendingDown size={32} className="empty-state-icon" />
+                <p className="empty-state-text">No weight data logged yet. Start tracking above!</p>
+              </div>
             )}
           </div>
         </div>
-        
-        <div className="card" style={{ flex: '1 1 300px' }}>
-          <div className="flex items-center gap-2 mb-4">
-            <Activity className="text-accent" />
-            <h2 style={{ fontSize: '1.2rem' }}>Activity Feed</h2>
+
+        {/* Activity Feed */}
+        <div className="card">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="stat-icon" style={{ backgroundColor: 'var(--accent-soft)', width: '36px', height: '36px' }}>
+              <Activity size={18} style={{ color: 'var(--accent)' }} />
+            </div>
+            <h2 style={{ fontSize: '1.0625rem', fontWeight: 600 }}>Activity Feed</h2>
           </div>
-          
-          <div className="flex flex-col gap-4">
+
+          <div className="flex-col gap-4" style={{ display: 'flex' }}>
             {activities.map(activity => (
-              <div key={activity.id} className="flex flex-col pb-2" style={{ borderBottom: '1px solid var(--border-color)' }}>
-                <p>
-                  <strong className="text-accent">{activity.user}</strong> {activity.action}
+              <div key={activity.id} className="activity-item" style={{ paddingBottom: 'var(--space-4)' }}>
+                <p style={{ fontSize: '0.875rem', lineHeight: 1.5 }}>
+                  <strong style={{ color: 'var(--accent)', fontWeight: 600 }}>{activity.user}</strong>{' '}
+                  <span style={{ color: 'var(--text-secondary)' }}>{activity.action}</span>
                 </p>
-                <span className="text-muted" style={{ fontSize: '0.85rem' }}>{activity.time}</span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>{activity.time}</span>
               </div>
             ))}
-            {activities.length === 0 && <p className="text-muted">No recent activity. Go crush a workout!</p>}
+            {activities.length === 0 && (
+              <div className="empty-state" style={{ padding: 'var(--space-6) 0' }}>
+                <Activity size={28} className="empty-state-icon" />
+                <p className="empty-state-text">No recent activity. Go crush a workout!</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Today's Plan */}
+        <div className="card" style={{ display: 'flex', flexDirection: 'column' }}>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="stat-icon" style={{ backgroundColor: 'var(--accent-soft)', width: '36px', height: '36px' }}>
+                <CheckCircle size={18} style={{ color: 'var(--accent)' }} />
+              </div>
+              <h2 style={{ fontSize: '1.0625rem', fontWeight: 600 }}>Today's Plan</h2>
+            </div>
+          </div>
+          
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            {todayTemplate ? (
+              todayTemplate.is_rest_day ? (
+                <div className="empty-state" style={{ padding: 'var(--space-4) 0' }}>
+                  <span style={{ fontSize: '2rem', marginBottom: 'var(--space-2)' }}>☕</span>
+                  <p style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Rest Day</p>
+                  <p className="empty-state-text">Time to recover and grow.</p>
+                </div>
+              ) : (
+                <div className="flex-col gap-3" style={{ display: 'flex' }}>
+                  <p style={{ fontWeight: 600, fontSize: '0.9375rem', color: 'var(--accent)' }}>
+                    {todayTemplate.routine_name || 'Workout'}
+                  </p>
+                  
+                  {todayTemplate.exercises?.length > 0 ? (
+                    <div className="flex-col gap-2" style={{ display: 'flex', marginTop: 'var(--space-1)' }}>
+                      {todayTemplate.exercises.slice(0, 4).map(ex => (
+                        <div key={ex.id} className="flex justify-between items-center" style={{ fontSize: '0.875rem' }}>
+                          <span style={{ color: 'var(--text-secondary)' }}>{ex.name}</span>
+                          <span style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem' }}>{ex.sets} × {ex.reps}</span>
+                        </div>
+                      ))}
+                      {todayTemplate.exercises.length > 4 && (
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', textAlign: 'center', marginTop: 'var(--space-2)' }}>
+                          +{todayTemplate.exercises.length - 4} more exercises
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p style={{ fontSize: '0.875rem', color: 'var(--text-tertiary)' }}>No exercises added yet.</p>
+                  )}
+                  
+                  <a href="/workouts" className="btn btn-secondary btn-sm" style={{ marginTop: 'var(--space-4)', alignSelf: 'flex-start' }}>
+                    Start Workout
+                  </a>
+                </div>
+              )
+            ) : (
+              <div className="empty-state" style={{ padding: 'var(--space-4) 0' }}>
+                <p className="empty-state-text">No template set for today.</p>
+                <a href="/templates" className="btn btn-secondary btn-sm mt-3">Set one up</a>
+              </div>
+            )}
           </div>
         </div>
       </div>

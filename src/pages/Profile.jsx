@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { User, Save } from 'lucide-react';
+import { User, Save, LogOut, Loader2, Mail } from 'lucide-react';
+import { useToast } from '../App';
 
 export default function Profile({ session }) {
+  const toast = useToast();
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [displayName, setDisplayName] = useState('');
-  const [message, setMessage] = useState('');
 
   useEffect(() => {
     let ignore = false;
@@ -35,8 +37,7 @@ export default function Profile({ session }) {
 
   const updateProfile = async (e) => {
     e.preventDefault();
-    setLoading(true);
-    setMessage('');
+    setSaving(true);
 
     try {
       const { user } = session;
@@ -50,55 +51,112 @@ export default function Profile({ session }) {
       const { error } = await supabase.from('profiles').upsert(updates);
 
       if (error) throw error;
-      setMessage('Profile updated successfully!');
+      toast?.success('Profile updated successfully!');
     } catch (error) {
-      setMessage(error.message);
+      toast?.error(error.message);
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+  };
+
+  const getInitial = () => {
+    if (displayName) return displayName.charAt(0).toUpperCase();
+    if (session?.user?.email) return session.user.email.charAt(0).toUpperCase();
+    return '?';
+  };
+
   return (
-    <div className="flex flex-col gap-4">
-      <header className="page-header mb-4">
+    <div className="flex-col gap-5 stagger-children" style={{ display: 'flex' }}>
+      <header className="page-header">
         <h1 className="page-title">Profile</h1>
-        <p className="text-muted">Customize how you appear on the leaderboard and calendar.</p>
+        <p className="page-subtitle">Customize how you appear on the leaderboard and calendar.</p>
       </header>
 
-      <div className="card" style={{ maxWidth: '500px' }}>
-        <div className="flex items-center gap-4 mb-6">
-          <div style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: 'var(--accent-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <User size={32} className="text-accent" />
+      <div className="card" style={{ maxWidth: '480px' }}>
+        {/* Avatar & Info */}
+        <div className="flex items-center gap-5 mb-8">
+          <div className="profile-avatar">
+            <div className="profile-avatar-inner">
+              {loading ? (
+                <Loader2 size={24} className="animate-spin" style={{ color: 'var(--text-tertiary)' }} />
+              ) : (
+                <span style={{ fontSize: '1.5rem', fontWeight: 800 }}>{getInitial()}</span>
+              )}
+            </div>
           </div>
           <div>
-            <h2 style={{ fontSize: '1.25rem' }}>Your Information</h2>
-            <p className="text-muted" style={{ fontSize: '0.9rem' }}>{session?.user?.email}</p>
+            <h2 style={{ fontSize: '1.125rem', fontWeight: 600 }}>
+              {loading ? (
+                <span className="skeleton skeleton-text" style={{ width: '120px', display: 'inline-block' }} />
+              ) : (
+                displayName || 'Set your name'
+              )}
+            </h2>
+            <div className="flex items-center gap-2 mt-1">
+              <Mail size={13} style={{ color: 'var(--text-tertiary)' }} />
+              <p style={{ color: 'var(--text-tertiary)', fontSize: '0.8125rem' }}>
+                {session?.user?.email}
+              </p>
+            </div>
           </div>
         </div>
 
-        <form onSubmit={updateProfile} className="flex flex-col gap-4">
-          <div>
-            <label className="text-muted mb-2 block" style={{ fontSize: '0.9rem', fontWeight: 600 }}>Display Name</label>
+        {/* Form */}
+        <form onSubmit={updateProfile} className="flex-col gap-5" style={{ display: 'flex' }}>
+          <div className="form-group">
+            <label className="form-label">Display Name</label>
             <input
               type="text"
               placeholder="e.g. John or Sis"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              style={{ padding: '0.75rem 1rem' }}
             />
+            <p className="form-hint">This is how others will see you on the calendar and activity feed.</p>
           </div>
 
-          {message && (
-            <div style={{ color: message.includes('success') ? 'var(--success-color)' : 'var(--danger-color)', fontSize: '0.9rem' }}>
-              {message}
-            </div>
-          )}
-
-          <button className="btn btn-primary" type="submit" disabled={loading} style={{ alignSelf: 'flex-start', marginTop: '1rem' }}>
-            <Save size={18} />
-            {loading ? 'Saving...' : 'Save Profile'}
+          <button
+            className="btn btn-primary"
+            type="submit"
+            disabled={saving || loading}
+            style={{ alignSelf: 'flex-start' }}
+          >
+            {saving ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                <span>Saving...</span>
+              </>
+            ) : (
+              <>
+                <Save size={16} />
+                <span>Save Profile</span>
+              </>
+            )}
           </button>
         </form>
+      </div>
+
+      {/* Sign Out Section — visible on mobile where it's hidden from nav */}
+      <div className="card signout-card" style={{ maxWidth: '480px' }}>
+        <style>{`
+          .signout-card { display: none; }
+          @media (max-width: 640px) { .signout-card { display: block !important; } }
+        `}</style>
+        <div className="flex items-center justify-between">
+          <div>
+            <p style={{ fontWeight: 600, fontSize: '0.9375rem' }}>Sign Out</p>
+            <p style={{ color: 'var(--text-tertiary)', fontSize: '0.8125rem' }}>
+              You'll need to sign in again next time.
+            </p>
+          </div>
+          <button onClick={handleLogout} className="btn btn-danger btn-sm">
+            <LogOut size={16} />
+            <span>Sign Out</span>
+          </button>
+        </div>
       </div>
     </div>
   );

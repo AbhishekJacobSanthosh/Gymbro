@@ -1,24 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, CheckCircle, Flame, User, Loader2, X, Check } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useToast } from '../App';
 
 export default function Calendar({ session }) {
+  const toast = useToast();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [loading, setLoading] = useState(true);
-  
+
   // Navigation
   const prevMonth = () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
   const nextMonth = () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
 
   const daysInMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).getDate();
   const startDay = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).getDay(); // 0 is Sunday
-  
+
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
   const blanks = Array.from({ length: startDay }, (_, i) => i);
 
   const [profiles, setProfiles] = useState({
-    you: { id: session?.user?.id, name: 'You', color: 'var(--accent-primary)', streak: 0, total: 0 },
-    sister: { id: null, name: 'Sister', color: '#4CAF50', streak: 0, total: 0 }
+    you: { id: session?.user?.id, name: 'You', color: 'var(--accent)', streak: 0, total: 0 },
+    sister: { id: null, name: 'Partner', color: 'var(--success)', streak: 0, total: 0 }
   });
 
   const [activityData, setActivityData] = useState({});
@@ -42,7 +44,7 @@ export default function Calendar({ session }) {
     try {
       // 1. Fetch all profiles to find sister
       const { data: allProfiles } = await supabase.from('profiles').select('*');
-      
+
       let youProfile = { ...profiles.you };
       let sisterProfile = { ...profiles.sister };
 
@@ -53,7 +55,7 @@ export default function Calendar({ session }) {
         if (youData) youProfile.name = youData.display_name || 'You';
         if (sisterData) {
           sisterProfile.id = sisterData.id;
-          sisterProfile.name = sisterData.display_name || 'Sister';
+          sisterProfile.name = sisterData.display_name || 'Partner';
         }
       }
 
@@ -68,6 +70,13 @@ export default function Calendar({ session }) {
         .gte('completed_at', startOfMonth)
         .lte('completed_at', endOfMonth);
 
+      // Fetch ALL completed workouts for streak calculation
+      const { data: allWorkouts } = await supabase
+        .from('workouts')
+        .select('user_id, completed_at')
+        .eq('completed', true)
+        .order('completed_at', { ascending: false });
+
       // Process workouts into activityData map: { dayNumber: ['you', 'sister'] }
       let newActivityData = {};
       let youTotal = 0;
@@ -77,7 +86,7 @@ export default function Calendar({ session }) {
         workouts.forEach(w => {
           const wDate = new Date(w.completed_at);
           const dayNum = wDate.getDate();
-          
+
           if (!newActivityData[dayNum]) {
             newActivityData[dayNum] = [];
           }
@@ -92,39 +101,69 @@ export default function Calendar({ session }) {
         });
       }
 
+      const calculateStreak = (history) => {
+        if (!history || history.length === 0) return 0;
+        let streak = 0;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        let currentCheckDate = new Date(today);
+
+        const firstDate = new Date(history[0].completed_at);
+        firstDate.setHours(0, 0, 0, 0);
+
+        const diffDays = Math.ceil(Math.abs(today - firstDate) / (1000 * 60 * 60 * 24));
+        if (diffDays <= 1) {
+          currentCheckDate = new Date(firstDate);
+          for (let i = 0; i < history.length; i++) {
+            const wDate = new Date(history[i].completed_at);
+            wDate.setHours(0, 0, 0, 0);
+            if (wDate.getTime() === currentCheckDate.getTime()) {
+              streak++;
+              currentCheckDate.setDate(currentCheckDate.getDate() - 1);
+            } else if (wDate.getTime() > currentCheckDate.getTime()) {
+              continue; // multiple per day
+            } else {
+              break;
+            }
+          }
+        }
+        return streak;
+      };
+
+      if (allWorkouts) {
+        youProfile.streak = calculateStreak(allWorkouts.filter(w => w.user_id === youProfile.id));
+        sisterProfile.streak = calculateStreak(allWorkouts.filter(w => w.user_id === sisterProfile.id));
+      }
+
       youProfile.total = youTotal;
       sisterProfile.total = sisterTotal;
 
-      // 3. (Optional) Fetch streak exactly like Home.jsx for both users here. 
-      // For now, we will just display 0 if we don't recalculate it, or we could fetch all workouts.
-      // To keep it simple, we'll leave streak at 0 for now unless you want the full query.
-
       setProfiles({ you: youProfile, sister: sisterProfile });
       setActivityData(newActivityData);
-      
+
     } catch (error) {
       console.error(error);
     }
-    
+
     setLoading(false);
   };
 
   const handleDayClick = async (day) => {
     const clickedDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
     const today = new Date();
-    today.setHours(0,0,0,0);
-    
+    today.setHours(0, 0, 0, 0);
+
     if (clickedDate > today) {
-      alert("You cannot log a workout in the future!");
+      toast?.info("You can't log a workout in the future!");
       return;
     }
-    
+
     setSelectedDate(clickedDate);
     setModalOpen(true);
     setModalLoading(true);
-    
+
     const dayOfWeekStr = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][clickedDate.getDay()];
-    
+
     const { data: templates } = await supabase
       .from('workouts')
       .select('*')
@@ -137,13 +176,13 @@ export default function Calendar({ session }) {
     if (templates && templates.length > 0) {
       const template = templates[0];
       setActiveTemplate(template);
-      
+
       const { data: exData } = await supabase
         .from('exercises')
         .select('*')
         .eq('workout_id', template.id)
         .order('created_at', { ascending: true });
-        
+
       const formattedExercises = (exData || []).map(ex => ({
         ...ex,
         completed: false
@@ -157,13 +196,13 @@ export default function Calendar({ session }) {
   };
 
   const handleLocalChange = (exId, field, value) => {
-    setDayExercises(prev => prev.map(ex => 
+    setDayExercises(prev => prev.map(ex =>
       ex.id === exId ? { ...ex, [field]: value } : ex
     ));
   };
 
   const toggleComplete = (exId, currentStatus) => {
-    setDayExercises(prev => prev.map(ex => 
+    setDayExercises(prev => prev.map(ex =>
       ex.id === exId ? { ...ex, completed: !currentStatus } : ex
     ));
   };
@@ -171,15 +210,15 @@ export default function Calendar({ session }) {
   const finishRetroactiveWorkout = async () => {
     if (!activeTemplate) return;
     setSaving(true);
-    
+
     // Save updated exercises (reps and weights for progressive overload) and reset completed status
     for (const ex of dayExercises) {
       await supabase
         .from('exercises')
-        .update({ 
-          reps: ex.reps, 
+        .update({
+          reps: ex.reps,
           weight: parseFloat(ex.weight) || 0,
-          completed: false 
+          completed: false
         })
         .eq('id', ex.id);
     }
@@ -198,226 +237,276 @@ export default function Calendar({ session }) {
     await fetchCalendarData();
     setModalOpen(false);
     setSaving(false);
+
+    toast?.success('Workout logged successfully!');
   };
 
+  const todayDate = new Date();
+
+  // Get user initials for avatar
+  const getInitial = (name) => name ? name.charAt(0).toUpperCase() : '?';
+
   return (
-    <div className="flex flex-col gap-4">
-      <header className="page-header mb-2">
+    <div className="flex-col gap-5 stagger-children" style={{ display: 'flex' }}>
+      <header className="page-header">
         <h1 className="page-title">Consistency</h1>
-        <p className="text-muted">Track your progress and build habits.</p>
+        <p className="page-subtitle">Track your progress and build habits.</p>
       </header>
-      
-      <div className="flex gap-4" style={{ flexWrap: 'wrap' }}>
-        
-        {/* Main Calendar View */}
-        <div className="card" style={{ flex: '2 1 400px' }}>
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-2">
-              <CalendarIcon className="text-accent" />
-              <h2 style={{ fontSize: '1.25rem' }}>
-                {currentDate.toLocaleString('default', { month: 'long' })} {currentDate.getFullYear()}
-              </h2>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={prevMonth} className="btn btn-secondary" style={{ padding: '0.5rem' }}><ChevronLeft size={20} /></button>
-              <button onClick={nextMonth} className="btn btn-secondary" style={{ padding: '0.5rem' }}><ChevronRight size={20} /></button>
-            </div>
-          </div>
 
-          {loading ? (
-             <div className="flex justify-center p-12 text-muted">
-               <Loader2 className="animate-spin" size={32} />
-             </div>
-          ) : (
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(7, 1fr)',
-              gap: '0.5rem',
-              textAlign: 'center'
-            }}>
-              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-                <div key={day} className="text-muted" style={{ fontWeight: 600, paddingBottom: '0.5rem' }}>{day}</div>
-              ))}
-              
-              {blanks.map(blank => (
-                <div key={`blank-${blank}`} style={{ padding: '1rem', background: 'transparent' }} />
-              ))}
-              
-              {days.map(day => {
-                const dayData = activityData[day] || [];
-                const youCompleted = dayData.includes('you');
-                const sisterCompleted = dayData.includes('sister');
-                const hasActivity = dayData.length > 0;
-                
-                const today = new Date();
-                const isToday = day === today.getDate() && 
-                                currentDate.getMonth() === today.getMonth() && 
-                                currentDate.getFullYear() === today.getFullYear();
-                
-                return (
-                  <div 
-                    key={day} 
-                    onClick={() => handleDayClick(day)}
-                    style={{ 
-                      padding: '1rem 0',
-                      borderRadius: 'var(--border-radius)',
-                      backgroundColor: hasActivity ? 'var(--bg-elevated)' : 'transparent',
-                      border: isToday ? '2px solid var(--accent-primary)' : hasActivity ? '1px solid var(--border-color)' : '1px solid transparent',
-                      color: hasActivity ? 'var(--text-primary)' : 'var(--text-secondary)',
-                      fontWeight: hasActivity || isToday ? 'bold' : 'normal',
-                      position: 'relative',
-                      cursor: 'pointer',
-                      transition: 'var(--transition)'
-                    }}
-                    onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-elevated)'}
-                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = hasActivity ? 'var(--bg-elevated)' : 'transparent'}
-                  >
-                    {day}
-                    <div style={{ display: 'flex', justifyContent: 'center', gap: '4px', marginTop: '4px', height: '6px' }}>
-                      {youCompleted && (
-                        <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: profiles.you.color }} title={profiles.you.name} />
-                      )}
-                      {sisterCompleted && (
-                        <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: profiles.sister.color }} title={profiles.sister.name} />
-                      )}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 'var(--space-5)' }}>
+        {/* Calendar + Leaderboard layout */}
+        <div className="flex gap-5" style={{ flexWrap: 'wrap' }}>
+
+          {/* Main Calendar */}
+          <div className="card" style={{ flex: '2 1 400px' }}>
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="stat-icon" style={{ backgroundColor: 'var(--accent-soft)', width: '36px', height: '36px' }}>
+                  <CalendarIcon size={18} style={{ color: 'var(--accent)' }} />
+                </div>
+                <h2 style={{ fontSize: '1.0625rem', fontWeight: 600 }}>
+                  {currentDate.toLocaleString('default', { month: 'long' })} {currentDate.getFullYear()}
+                </h2>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={prevMonth} className="btn btn-secondary btn-icon">
+                  <ChevronLeft size={18} />
+                </button>
+                <button onClick={nextMonth} className="btn btn-secondary btn-icon">
+                  <ChevronRight size={18} />
+                </button>
+              </div>
+            </div>
+
+            {loading ? (
+              <div className="empty-state">
+                <Loader2 size={28} className="animate-spin" style={{ color: 'var(--text-tertiary)' }} />
+              </div>
+            ) : (
+              <div className="calendar-grid">
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+                  <div key={day} className="calendar-header-cell">{day}</div>
+                ))}
+
+                {blanks.map(blank => (
+                  <div key={`blank-${blank}`} className="calendar-blank" />
+                ))}
+
+                {days.map(day => {
+                  const dayData = activityData[day] || [];
+                  const youCompleted = dayData.includes('you');
+                  const sisterCompleted = dayData.includes('sister');
+                  const hasActivity = dayData.length > 0;
+
+                  const isToday = day === todayDate.getDate() &&
+                    currentDate.getMonth() === todayDate.getMonth() &&
+                    currentDate.getFullYear() === todayDate.getFullYear();
+
+                  return (
+                    <div
+                      key={day}
+                      onClick={() => handleDayClick(day)}
+                      className={`calendar-day ${hasActivity ? 'has-activity' : ''} ${isToday ? 'is-today' : ''}`}
+                    >
+                      <span>{day}</span>
+                      <div className="calendar-dots">
+                        {youCompleted && (
+                          <div className="calendar-dot" style={{ backgroundColor: profiles.you.color }} title={profiles.you.name} />
+                        )}
+                        {sisterCompleted && (
+                          <div className="calendar-dot" style={{ backgroundColor: profiles.sister.color }} title={profiles.sister.name} />
+                        )}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
-        {/* Sidebar: Leaderboard */}
-        <div style={{ flex: '1 1 250px', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          
-          <div className="card" style={{ borderLeft: `4px solid ${profiles.you.color}` }}>
-            <div className="flex items-center gap-2 mb-4">
-              <User size={20} style={{ color: profiles.you.color }} />
-              <h3 style={{ fontSize: '1.2rem', fontWeight: 600 }}>{profiles.you.name}</h3>
-            </div>
-            <div className="flex justify-between items-center mb-2">
-              <span className="text-muted">Active Streak</span>
-              <div className="flex items-center gap-1">
-                <Flame size={16} className="text-accent" />
-                <strong>🔥</strong>
+          {/* Sidebar: Leaderboard */}
+          <div style={{ flex: '1 1 240px', display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+            {/* You */}
+            <div className="card user-stat-card" style={{ paddingLeft: 'calc(var(--space-6) + 3px)' }}>
+              <style>{`.user-stat-card:first-child::before { background: var(--accent-gradient); }`}</style>
+              <div className="flex items-center gap-3 mb-4">
+                <div style={{
+                  width: '36px', height: '36px', borderRadius: 'var(--radius-full)',
+                  background: 'var(--accent-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '0.875rem', fontWeight: 700, color: 'var(--accent)'
+                }}>
+                  {getInitial(profiles.you.name)}
+                </div>
+                <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>{profiles.you.name}</h3>
+              </div>
+              <div className="flex justify-between items-center mb-3">
+                <span style={{ color: 'var(--text-tertiary)', fontSize: '0.8125rem' }}>Active Streak</span>
+                <div className="flex items-center gap-1">
+                  <strong style={{ fontSize: '0.875rem', color: profiles.you.streak > 0 ? 'var(--accent)' : 'var(--text-tertiary)' }}>
+                    {profiles.you.streak > 0 ? '🔥' : '💤'} {profiles.you.streak}
+                  </strong>
+                </div>
+              </div>
+              <div className="flex justify-between items-center">
+                <span style={{ color: 'var(--text-tertiary)', fontSize: '0.8125rem' }}>This Month</span>
+                <div className="flex items-center gap-1">
+                  <CheckCircle size={14} style={{ color: 'var(--success)' }} />
+                  <strong style={{ fontSize: '0.875rem' }}>{profiles.you.total}</strong>
+                </div>
               </div>
             </div>
-            <div className="flex justify-between items-center">
-              <span className="text-muted">This Month</span>
-              <div className="flex items-center gap-1">
-                <CheckCircle size={16} className="text-success" style={{ color: 'var(--success-color)' }} />
-                <strong>{profiles.you.total}</strong>
+
+            {/* Partner */}
+            <div className="card user-stat-card" style={{ paddingLeft: 'calc(var(--space-6) + 3px)' }}>
+              <style>{`.user-stat-card:nth-child(2)::before { background: var(--success); }`}</style>
+              <div className="flex items-center gap-3 mb-4">
+                <div style={{
+                  width: '36px', height: '36px', borderRadius: 'var(--radius-full)',
+                  background: 'var(--success-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '0.875rem', fontWeight: 700, color: 'var(--success)'
+                }}>
+                  {getInitial(profiles.sister.name)}
+                </div>
+                <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>{profiles.sister.name}</h3>
+              </div>
+              <div className="flex justify-between items-center mb-3">
+                <span style={{ color: 'var(--text-tertiary)', fontSize: '0.8125rem' }}>Active Streak</span>
+                <div className="flex items-center gap-1">
+                  <strong style={{ fontSize: '0.875rem', color: profiles.sister.streak > 0 ? 'var(--success)' : 'var(--text-tertiary)' }}>
+                    {profiles.sister.streak > 0 ? '🔥' : '💤'} {profiles.sister.streak}
+                  </strong>
+                </div>
+              </div>
+              <div className="flex justify-between items-center">
+                <span style={{ color: 'var(--text-tertiary)', fontSize: '0.8125rem' }}>This Month</span>
+                <div className="flex items-center gap-1">
+                  <CheckCircle size={14} style={{ color: 'var(--success)' }} />
+                  <strong style={{ fontSize: '0.875rem' }}>{profiles.sister.total}</strong>
+                </div>
+              </div>
+            </div>
+
+            {/* Legend */}
+            <div style={{ display: 'flex', gap: 'var(--space-4)', padding: 'var(--space-3)', justifyContent: 'center' }}>
+              <div className="flex items-center gap-2">
+                <div className="calendar-dot" style={{ backgroundColor: profiles.you.color, width: '8px', height: '8px' }} />
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>{profiles.you.name}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="calendar-dot" style={{ backgroundColor: profiles.sister.color, width: '8px', height: '8px' }} />
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>{profiles.sister.name}</span>
               </div>
             </div>
           </div>
-
-          <div className="card" style={{ borderLeft: `4px solid ${profiles.sister.color}` }}>
-            <div className="flex items-center gap-2 mb-4">
-              <User size={20} style={{ color: profiles.sister.color }} />
-              <h3 style={{ fontSize: '1.2rem', fontWeight: 600 }}>{profiles.sister.name}</h3>
-            </div>
-            <div className="flex justify-between items-center mb-2">
-              <span className="text-muted">Active Streak</span>
-              <div className="flex items-center gap-1">
-                <Flame size={16} style={{ color: profiles.sister.color }} />
-                <strong>🔥</strong>
-              </div>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-muted">This Month</span>
-              <div className="flex items-center gap-1">
-                <CheckCircle size={16} className="text-success" style={{ color: 'var(--success-color)' }} />
-                <strong>{profiles.sister.total}</strong>
-              </div>
-            </div>
-          </div>
-
         </div>
       </div>
 
-      {/* Retroactive Logging Modal */}
+      {/* Retroactive Logging Modal / Bottom Sheet */}
       {modalOpen && (
-        <div style={{
-          position: 'fixed',
-          top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0,0,0,0.8)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000,
-          padding: '1rem'
-        }}>
-          <div className="card" style={{ width: '100%', maxWidth: '600px', maxHeight: '90vh', overflowY: 'auto', position: 'relative' }}>
-            <button 
+        <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setModalOpen(false); }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            {/* Drag handle for mobile */}
+            <div className="modal-drag-handle" style={{ display: 'none' }} />
+            <style>{`@media (max-width: 640px) { .modal-drag-handle { display: block !important; } }`}</style>
+
+            <button
               onClick={() => setModalOpen(false)}
-              style={{ position: 'absolute', top: '1rem', right: '1rem', background: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
+              className="modal-close"
             >
-              <X size={24} />
+              <X size={20} />
             </button>
-            
-            <h2 className="page-title mb-1">Log Workout</h2>
-            <p className="text-muted mb-4">{selectedDate?.toDateString()}</p>
+
+            <h2 className="modal-title">Log Workout</h2>
+            <p className="modal-subtitle">{selectedDate?.toDateString()}</p>
 
             {modalLoading ? (
-              <div className="flex justify-center p-8"><Loader2 className="animate-spin text-accent" size={32} /></div>
+              <div className="empty-state">
+                <Loader2 size={28} className="animate-spin" style={{ color: 'var(--text-tertiary)' }} />
+              </div>
             ) : !activeTemplate ? (
-              <div className="p-4 text-center text-muted">No template found for this day. Go to the Planner to create one first.</div>
+              <div className="empty-state">
+                <CalendarIcon size={28} className="empty-state-icon" />
+                <p className="empty-state-text">No template found for this day. Go to the Planner to create one first.</p>
+              </div>
             ) : activeTemplate.is_rest_day ? (
-              <div className="p-4 text-center text-muted">This day was scheduled as a Rest Day.</div>
+              <div className="empty-state">
+                <p className="empty-state-text">This day was scheduled as a Rest Day.</p>
+              </div>
             ) : dayExercises.length === 0 ? (
-              <div className="p-4 text-center text-muted">No exercises in this template. Add them in the Planner first.</div>
+              <div className="empty-state">
+                <p className="empty-state-text">No exercises in this template. Add them in the Planner first.</p>
+              </div>
             ) : (
-              <div className="flex flex-col gap-4">
+              <div className="flex-col gap-1" style={{ display: 'flex' }}>
                 {dayExercises.map(ex => (
-                  <div key={ex.id} className="flex items-center justify-between" style={{ padding: '1rem 0', borderBottom: '1px solid var(--border-color)', opacity: ex.completed ? 0.5 : 1 }}>
-                    <div className="flex flex-col gap-1" style={{ flex: 1 }}>
-                      <h3 style={{ fontSize: '1.15rem', fontWeight: 600, color: ex.completed ? 'var(--text-muted)' : 'var(--text-primary)', textDecoration: ex.completed ? 'line-through' : 'none' }}>
+                  <div
+                    key={ex.id}
+                    className="exercise-row"
+                    style={{ opacity: ex.completed ? 0.5 : 1 }}
+                  >
+                    <button
+                      onClick={() => toggleComplete(ex.id, ex.completed)}
+                      className={`exercise-check ${ex.completed ? 'checked' : ''}`}
+                    >
+                      <Check size={16} />
+                    </button>
+
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <h3 className={`exercise-name ${ex.completed ? 'completed' : ''}`}>
                         {ex.name}
                       </h3>
-                      <div className="flex items-center gap-3 text-sm text-muted mt-1" style={{ flexWrap: 'wrap' }}>
+                      <div className="exercise-meta">
                         <span style={{ fontWeight: 500 }}>{ex.sets} Sets</span>
-                        <span style={{ opacity: 0.3 }}>•</span>
+                        <div className="exercise-meta-dot" />
                         <div className="flex items-center gap-1">
-                          <input 
-                            type="text" 
+                          <input
+                            type="text"
                             value={ex.reps}
                             onChange={e => handleLocalChange(ex.id, 'reps', e.target.value)}
-                            style={{ width: '45px', padding: '0.2rem 0', backgroundColor: 'transparent', border: 'none', borderBottom: '1px solid var(--text-muted)', textAlign: 'center', color: 'var(--text-primary)', fontWeight: 600 }}
+                            className="exercise-inline-input"
                           />
                           <span>Reps</span>
                         </div>
-                        <span style={{ opacity: 0.3 }}>•</span>
+                        <div className="exercise-meta-dot" />
                         <div className="flex items-center gap-1">
-                          <input 
-                            type="number" 
+                          <input
+                            type="number"
                             step="0.5"
                             value={ex.weight}
                             onChange={e => handleLocalChange(ex.id, 'weight', e.target.value)}
-                            style={{ width: '50px', padding: '0.2rem 0', backgroundColor: 'transparent', border: 'none', borderBottom: '1px solid var(--text-muted)', textAlign: 'center', color: 'var(--text-primary)', fontWeight: 600 }}
+                            className="exercise-inline-input"
+                            style={{ width: '50px' }}
                           />
                           <span>kg</span>
                         </div>
                       </div>
                     </div>
-                    
-                    <button 
-                      onClick={() => toggleComplete(ex.id, ex.completed)}
-                      style={{ width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: ex.completed ? 'var(--success-color)' : 'transparent', border: `2px solid ${ex.completed ? 'var(--success-color)' : 'var(--border-color)'}`, color: ex.completed ? '#fff' : 'transparent', borderRadius: '50%', cursor: 'pointer', transition: 'all 0.2s', marginLeft: '1rem', flexShrink: 0 }}
-                    >
-                      <Check size={20} />
-                    </button>
                   </div>
                 ))}
 
-                <button 
+                <button
                   onClick={finishRetroactiveWorkout}
                   disabled={saving || !dayExercises.every(ex => ex.completed)}
-                  className="btn btn-primary mt-4 w-full"
-                  style={{ padding: '1rem', fontSize: '1.1rem', opacity: (!dayExercises.every(ex => ex.completed)) ? 0.5 : 1 }}
+                  className="btn btn-primary btn-lg w-full mt-6"
                 >
-                  {saving ? 'Saving...' : 'Finish Workout'}
+                  {saving ? (
+                    <>
+                      <Loader2 size={18} className="animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check size={18} />
+                      <span>Finish Workout</span>
+                    </>
+                  )}
                 </button>
+
+                {!dayExercises.every(ex => ex.completed) && (
+                  <p style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem', textAlign: 'center', marginTop: 'var(--space-2)' }}>
+                    Complete all exercises to finish
+                  </p>
+                )}
               </div>
             )}
           </div>
