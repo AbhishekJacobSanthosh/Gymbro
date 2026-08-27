@@ -1491,6 +1491,18 @@ input[type="number"] {
 }
 
 
+/* ---- Planner Sidebar ---- */
+.planner-sidebar {
+  flex: 1 1 250px;
+}
+
+@media (min-width: 769px) {
+  .planner-sidebar {
+    position: sticky;
+    top: var(--space-6);
+  }
+}
+
 /* ============================================
    RESPONSIVE — TABLET (641px – 1024px)
    ============================================ */

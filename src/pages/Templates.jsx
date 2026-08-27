@@ -183,7 +183,7 @@ export default function Templates({ session }) {
       <div style={{ display: 'flex', gap: 'var(--space-6)', flexWrap: 'wrap', alignItems: 'flex-start', flexDirection: 'row-reverse' }}>
         
         {/* Right Sidebar: Weekly Overview */}
-        <div style={{ flex: '1 1 250px', position: 'sticky', top: 'var(--space-6)' }}>
+        <div className="planner-sidebar">
           <div className="card" style={{ padding: 'var(--space-5)' }}>
             <p className="text-label mb-4">Weekly Overview</p>
             <div className="flex-col gap-2" style={{ display: 'flex' }}>
