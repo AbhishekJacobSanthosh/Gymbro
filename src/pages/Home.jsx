@@ -149,9 +149,13 @@ export default function Home({ session }) {
       templates.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); // newest first
 
       const templatesByDay = {};
+      const restDaysOfWeek = new Set();
       templates.forEach(t => {
         if (!templatesByDay[t.day_of_week]) {
           templatesByDay[t.day_of_week] = t;
+          if (t.is_rest_day) {
+            restDaysOfWeek.add(t.day_of_week);
+          }
         }
       });
 
@@ -177,29 +181,34 @@ export default function Home({ session }) {
       if (completedHistory.length > 0) {
         today.setHours(0, 0, 0, 0);
         let currentCheckDate = new Date(today);
+        const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-        const firstWorkoutDate = new Date(completedHistory[0].completed_at);
-        firstWorkoutDate.setHours(0, 0, 0, 0);
+        const completedDates = new Set(completedHistory.map(w => {
+          const d = new Date(w.completed_at);
+          d.setHours(0, 0, 0, 0);
+          return d.getTime();
+        }));
 
-        const diffTime = Math.abs(today - firstWorkoutDate);
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        for (let i = 0; i < 365; i++) {
+          const time = currentCheckDate.getTime();
+          const isCompleted = completedDates.has(time);
+          const dayName = DAYS[currentCheckDate.getDay()];
+          const isRestDay = restDaysOfWeek.has(dayName);
+          const isToday = i === 0;
 
-        if (diffDays <= 1) {
-          currentCheckDate = new Date(firstWorkoutDate);
-
-          for (let i = 0; i < completedHistory.length; i++) {
-            const wDate = new Date(completedHistory[i].completed_at);
-            wDate.setHours(0, 0, 0, 0);
-
-            if (wDate.getTime() === currentCheckDate.getTime()) {
-              streak++;
-              currentCheckDate.setDate(currentCheckDate.getDate() - 1);
-            } else if (wDate.getTime() > currentCheckDate.getTime()) {
-              continue;
+          if (isCompleted) {
+            streak++;
+          } else {
+            if (isToday) {
+              // skip today if not completed
+            } else if (isRestDay) {
+              // skip rest day if not completed
             } else {
+              // missing a required day breaks streak
               break;
             }
           }
+          currentCheckDate.setDate(currentCheckDate.getDate() - 1);
         }
       }
     }

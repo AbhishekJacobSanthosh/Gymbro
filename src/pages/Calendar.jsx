@@ -77,6 +77,32 @@ export default function Calendar({ session }) {
         .eq('completed', true)
         .order('completed_at', { ascending: false });
 
+      // Fetch active templates to determine rest days
+      const { data: allTemplates } = await supabase
+        .from('workouts')
+        .select('user_id, day_of_week, is_rest_day, created_at')
+        .eq('completed', false)
+        .in('user_id', [youProfile.id, sisterProfile.id].filter(Boolean));
+
+      const userRestDays = {
+        [youProfile.id]: new Set(),
+        [sisterProfile.id]: new Set()
+      };
+
+      if (allTemplates) {
+        allTemplates.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        const templatesByUserAndDay = {};
+        allTemplates.forEach(t => {
+          if (!templatesByUserAndDay[t.user_id]) templatesByUserAndDay[t.user_id] = {};
+          if (!templatesByUserAndDay[t.user_id][t.day_of_week]) {
+            templatesByUserAndDay[t.user_id][t.day_of_week] = t;
+            if (t.is_rest_day) {
+              userRestDays[t.user_id].add(t.day_of_week);
+            }
+          }
+        });
+      }
+
       // Process workouts into activityData map: { dayNumber: ['you', 'sister'] }
       let newActivityData = {};
       let youTotal = 0;
@@ -101,38 +127,47 @@ export default function Calendar({ session }) {
         });
       }
 
-      const calculateStreak = (history) => {
+      const calculateStreak = (history, restDaysOfWeek) => {
         if (!history || history.length === 0) return 0;
         let streak = 0;
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         let currentCheckDate = new Date(today);
+        const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-        const firstDate = new Date(history[0].completed_at);
-        firstDate.setHours(0, 0, 0, 0);
+        const completedDates = new Set(history.map(w => {
+          const d = new Date(w.completed_at);
+          d.setHours(0, 0, 0, 0);
+          return d.getTime();
+        }));
 
-        const diffDays = Math.ceil(Math.abs(today - firstDate) / (1000 * 60 * 60 * 24));
-        if (diffDays <= 1) {
-          currentCheckDate = new Date(firstDate);
-          for (let i = 0; i < history.length; i++) {
-            const wDate = new Date(history[i].completed_at);
-            wDate.setHours(0, 0, 0, 0);
-            if (wDate.getTime() === currentCheckDate.getTime()) {
-              streak++;
-              currentCheckDate.setDate(currentCheckDate.getDate() - 1);
-            } else if (wDate.getTime() > currentCheckDate.getTime()) {
-              continue; // multiple per day
+        for (let i = 0; i < 365; i++) {
+          const time = currentCheckDate.getTime();
+          const isCompleted = completedDates.has(time);
+          const dayName = DAYS[currentCheckDate.getDay()];
+          const isRestDay = restDaysOfWeek.has(dayName);
+          const isToday = i === 0;
+
+          if (isCompleted) {
+            streak++;
+          } else {
+            if (isToday) {
+              // skip today if not completed
+            } else if (isRestDay) {
+              // skip rest day if not completed
             } else {
+              // missing a required day breaks streak
               break;
             }
           }
+          currentCheckDate.setDate(currentCheckDate.getDate() - 1);
         }
         return streak;
       };
 
       if (allWorkouts) {
-        youProfile.streak = calculateStreak(allWorkouts.filter(w => w.user_id === youProfile.id));
-        sisterProfile.streak = calculateStreak(allWorkouts.filter(w => w.user_id === sisterProfile.id));
+        youProfile.streak = calculateStreak(allWorkouts.filter(w => w.user_id === youProfile.id), userRestDays[youProfile.id]);
+        sisterProfile.streak = calculateStreak(allWorkouts.filter(w => w.user_id === sisterProfile.id), userRestDays[sisterProfile.id]);
       }
 
       youProfile.total = youTotal;
