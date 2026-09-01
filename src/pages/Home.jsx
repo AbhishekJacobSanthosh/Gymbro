@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { supabase } from '../lib/supabase';
-import { TrendingDown, Activity, Trophy, Flame, CheckCircle } from 'lucide-react';
+import { TrendingDown, Activity, Trophy, Flame, CheckCircle, Snowflake, X } from 'lucide-react';
 
 const quotes = [
   "The only bad workout is the one that didn't happen.",
@@ -57,8 +57,19 @@ export default function Home({ session }) {
   const [activities, setActivities] = useState([]);
   const [stats, setStats] = useState({ totalWorkouts: 0, currentStreak: 0, weeklyGoal: '0 / 0' });
   const [displayName, setDisplayName] = useState('');
-
+  const [level, setLevel] = useState(1);
+  const [xp, setXp] = useState(0);
   const [todayTemplate, setTodayTemplate] = useState(null);
+  
+  // Analytics State
+  const [volumeData, setVolumeData] = useState([]);
+  const [top1RMs, setTop1RMs] = useState([]);
+  
+  // Freeze state
+  const [isFreezeModalOpen, setIsFreezeModalOpen] = useState(false);
+  const [freezeReason, setFreezeReason] = useState('');
+  const [isFreezing, setIsFreezing] = useState(false);
+  const [freezeDates, setFreezeDates] = useState(new Set());
 
   useEffect(() => {
     setQuote(quotes[Math.floor(Math.random() * quotes.length)]);
@@ -70,10 +81,14 @@ export default function Home({ session }) {
     if (!session?.user) return;
     const { data } = await supabase
       .from('profiles')
-      .select('display_name')
+      .select('display_name, level, xp')
       .eq('id', session.user.id)
       .single();
-    if (data) setDisplayName(data.display_name || '');
+    if (data) {
+      setDisplayName(data.display_name || '');
+      setLevel(data.level || 1);
+      setXp(data.xp || 0);
+    }
   };
 
   const fetchData = async () => {
@@ -132,10 +147,28 @@ export default function Home({ session }) {
       })));
     }
 
+    // Fetch Streak Freezes
+    const { data: freezes } = await supabase
+      .from('streak_freezes')
+      .select('freeze_date')
+      .eq('user_id', session.user.id);
+
+    let fetchedFreezeDates = new Set();
+    if (freezes) {
+      fetchedFreezeDates = new Set(freezes.map(f => {
+        // Need to parse date string safely. Date strings from postgres are usually YYYY-MM-DD
+        const [year, month, day] = f.freeze_date.split('-');
+        const d = new Date(year, month - 1, day);
+        d.setHours(0, 0, 0, 0);
+        return d.getTime();
+      }));
+    }
+    setFreezeDates(fetchedFreezeDates);
+
     // Fetch all workouts to calculate stats
     const { data: allWorkouts } = await supabase
       .from('workouts')
-      .select('completed, completed_at, is_rest_day, day_of_week, created_at')
+      .select('id, completed, completed_at, is_rest_day, day_of_week, created_at, exercises(sets, reps, weight)')
       .eq('user_id', session.user.id);
 
     let streak = 0;
@@ -194,6 +227,7 @@ export default function Home({ session }) {
           const isCompleted = completedDates.has(time);
           const dayName = DAYS[currentCheckDate.getDay()];
           const isRestDay = restDaysOfWeek.has(dayName);
+          const isFreezeDay = fetchedFreezeDates.has(time);
           const isToday = i === 0;
 
           if (isCompleted) {
@@ -201,8 +235,8 @@ export default function Home({ session }) {
           } else {
             if (isToday) {
               // skip today if not completed
-            } else if (isRestDay) {
-              // skip rest day if not completed
+            } else if (isRestDay || isFreezeDay) {
+              // skip rest day or freeze day if not completed
             } else {
               // missing a required day breaks streak
               break;
@@ -210,6 +244,39 @@ export default function Home({ session }) {
           }
           currentCheckDate.setDate(currentCheckDate.getDate() - 1);
         }
+        
+        // 5. Calculate Volume Over Time
+        const recentVolumes = [];
+        completedHistory.slice(0, 14).forEach(w => { 
+          if (!w.completed_at) return;
+          
+          let vol = 0;
+          if (w.exercises) {
+            w.exercises.forEach(ex => {
+               let reps = 0;
+               if (typeof ex.reps === 'string') {
+                 const match = ex.reps.match(/\d+/);
+                 if (match) reps = parseInt(match[0]);
+               } else {
+                 reps = parseInt(ex.reps) || 0;
+               }
+               const weight = parseFloat(ex.weight) || 0;
+               const sets = parseInt(ex.sets) || 0;
+               vol += (sets * reps * weight);
+            });
+          }
+          
+          if (vol > 0) {
+            recentVolumes.push({
+              dateObj: new Date(w.completed_at),
+              date: new Date(w.completed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+              volume: vol
+            });
+          }
+        });
+        
+        recentVolumes.sort((a, b) => a.dateObj - b.dateObj);
+        setVolumeData(recentVolumes);
       }
     }
 
@@ -219,6 +286,42 @@ export default function Home({ session }) {
       currentStreak: streak,
       weeklyGoal: `${completedThisWeek} / ${goal || 0}`
     }));
+
+    // 6. Fetch 1RMs
+    const { data: allExercises } = await supabase
+      .from('exercises')
+      .select('name, weight, reps, workouts!inner(completed)')
+      .eq('workouts.user_id', session.user.id)
+      .eq('workouts.completed', true);
+      
+    let oneRepMaxes = {};
+    if (allExercises) {
+      allExercises.forEach(ex => {
+        if (!ex.name || !ex.weight) return;
+        let reps = 0;
+        if (typeof ex.reps === 'string') {
+           const match = ex.reps.match(/\d+/);
+           if (match) reps = parseInt(match[0]);
+        } else {
+           reps = parseInt(ex.reps) || 0;
+        }
+        const weight = parseFloat(ex.weight) || 0;
+        
+        if (weight > 0 && reps > 0) {
+          const epley1RM = weight * (1 + reps / 30);
+          if (!oneRepMaxes[ex.name] || epley1RM > oneRepMaxes[ex.name]) {
+            oneRepMaxes[ex.name] = epley1RM;
+          }
+        }
+      });
+    }
+    
+    const topRMsArray = Object.entries(oneRepMaxes)
+      .map(([name, rm]) => ({ name, rm: Math.round(rm) }))
+      .sort((a, b) => b.rm - a.rm)
+      .slice(0, 3);
+      
+    setTop1RMs(topRMsArray);
   };
 
   const handleWeightSubmit = async (e) => {
@@ -236,14 +339,46 @@ export default function Home({ session }) {
     }
   };
 
+  const handleFreezeStreak = async () => {
+    if (!session?.user) return;
+    setIsFreezing(true);
+    
+    const today = new Date();
+    // Offset by timezone to get local date string YYYY-MM-DD reliably
+    const tzOffset = today.getTimezoneOffset() * 60000;
+    const localISOTime = (new Date(today - tzOffset)).toISOString().slice(0, -1);
+    const freezeDateStr = localISOTime.split('T')[0];
+
+    const { error } = await supabase.from('streak_freezes').insert([{
+      user_id: session.user.id,
+      freeze_date: freezeDateStr,
+      reason: freezeReason
+    }]);
+
+    if (!error) {
+      setIsFreezeModalOpen(false);
+      setFreezeReason('');
+      fetchData(); // Refresh to recalculate streak
+    }
+    setIsFreezing(false);
+  };
+
   const greeting = getGreeting();
 
   return (
     <div className="flex-col gap-6 stagger-children" style={{ display: 'flex' }}>
       {/* Header */}
-      <header className="page-header">
-        <h1 className="page-title">{greeting}{displayName ? `, ${displayName}` : ''}!</h1>
-        <p className="page-subtitle">Let's get after it today.</p>
+      <header className="page-header flex justify-between items-center">
+        <div>
+          <h1 className="page-title">{greeting}{displayName ? `, ${displayName}` : ''}!</h1>
+          <p className="page-subtitle">Let's get after it today.</p>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ display: 'inline-block', backgroundColor: 'var(--accent-soft)', color: 'var(--accent)', padding: '4px 12px', borderRadius: '100px', fontWeight: 700, fontSize: '0.875rem' }}>
+            Level {level}
+          </div>
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '4px', fontWeight: 600 }}>{xp} XP</p>
+        </div>
       </header>
 
       {/* Quick Stats */}
@@ -261,6 +396,12 @@ export default function Home({ session }) {
           <div>
             <p className="stat-label">Current Streak</p>
             <p className="stat-value">{stats.currentStreak} Days</p>
+            <button 
+              onClick={() => setIsFreezeModalOpen(true)}
+              style={{ background: 'none', border: 'none', padding: 0, color: 'var(--text-tertiary)', fontSize: '0.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}
+            >
+              <Snowflake size={12} /> Freeze Streak
+            </button>
           </div>
           <div className="stat-icon" style={{ backgroundColor: 'var(--accent-soft)' }}>
             <Flame size={22} style={{ color: 'var(--accent)' }} />
@@ -344,6 +485,70 @@ export default function Home({ session }) {
             )}
           </div>
         </div>
+
+        {/* Volume Tracker */}
+        <div className="card">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="stat-icon" style={{ backgroundColor: 'rgba(59, 130, 246, 0.1)', width: '36px', height: '36px' }}>
+              <Activity size={18} style={{ color: '#3b82f6' }} />
+            </div>
+            <h2 style={{ fontSize: '1.0625rem', fontWeight: 600 }}>Volume History</h2>
+          </div>
+
+          <div style={{ height: '200px', width: '100%' }}>
+            {volumeData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={volumeData}>
+                  <defs>
+                    <linearGradient id="volGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.25} />
+                      <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                  <XAxis dataKey="date" stroke="var(--text-quaternary)" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis stroke="var(--text-quaternary)" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} width={40} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Area
+                    type="monotone"
+                    dataKey="volume"
+                    stroke="#3b82f6"
+                    strokeWidth={2.5}
+                    fill="url(#volGradient)"
+                    dot={{ r: 3, fill: '#3b82f6', stroke: 'var(--bg-surface)', strokeWidth: 2 }}
+                    activeDot={{ r: 5, fill: '#3b82f6', stroke: 'var(--bg-surface)', strokeWidth: 2 }}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="empty-state" style={{ padding: 'var(--space-8) var(--space-4)' }}>
+                <Activity size={32} className="empty-state-icon" />
+                <p className="empty-state-text">Complete workouts to see your volume graph!</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* 1RM Estimations */}
+        {top1RMs.length > 0 && (
+          <div className="card">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="stat-icon" style={{ backgroundColor: 'var(--warning-soft)', width: '36px', height: '36px' }}>
+                <Trophy size={18} style={{ color: 'var(--warning)' }} />
+              </div>
+              <h2 style={{ fontSize: '1.0625rem', fontWeight: 600 }}>Est. 1 Rep Max</h2>
+            </div>
+            
+            <div className="flex-col gap-3" style={{ display: 'flex' }}>
+              {top1RMs.map((item, idx) => (
+                <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 16px', backgroundColor: 'var(--bg-elevated)', borderRadius: 'var(--radius-md)' }}>
+                  <span style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{item.name}</span>
+                  <span style={{ fontWeight: 700, color: 'var(--accent)' }}>{item.rm} kg</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Activity Feed */}
         <div className="card">
@@ -430,6 +635,38 @@ export default function Home({ session }) {
           </div>
         </div>
       </div>
+
+      {/* Freeze Modal */}
+      {isFreezeModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 'var(--space-4)', backdropFilter: 'blur(2px)' }}>
+          <div className="card" style={{ width: '100%', maxWidth: '400px', margin: '0 auto' }}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Snowflake size={20} style={{ color: '#60a5fa' }} /> Freeze Streak
+              </h2>
+              <button onClick={() => setIsFreezeModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
+                <X size={20} />
+              </button>
+            </div>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-4)', fontSize: '0.875rem', lineHeight: 1.5 }}>
+              Feeling sick or need a break? Freeze your streak for today so you don't lose your progress.
+            </p>
+            <input
+              type="text"
+              placeholder="Reason (e.g. Sick, Traveling)"
+              value={freezeReason}
+              onChange={(e) => setFreezeReason(e.target.value)}
+              style={{ width: '100%', marginBottom: 'var(--space-4)' }}
+            />
+            <div className="flex gap-2">
+              <button onClick={() => setIsFreezeModalOpen(false)} className="btn btn-secondary" style={{ flex: 1 }}>Cancel</button>
+              <button onClick={handleFreezeStreak} className="btn btn-primary" style={{ flex: 1 }} disabled={isFreezing}>
+                {isFreezing ? 'Freezing...' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Check, Dumbbell, Coffee, Loader2 } from 'lucide-react';
+import { Check, Dumbbell, Coffee, Loader2, Trophy } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../App';
 
@@ -51,6 +51,8 @@ export default function Workouts({ session }) {
   const [exercises, setExercises] = useState([]);
   const [loading, setLoading] = useState(true);
   const [finishing, setFinishing] = useState(false);
+  const [showConfetti, setShowConfetti] = useState(false);
+  const [prMessages, setPrMessages] = useState([]);
 
   // Template State
   const [routineName, setRoutineName] = useState('Workout');
@@ -138,10 +140,71 @@ export default function Workouts({ session }) {
       return;
     }
 
+    // --- GAMIFICATION: XP & LEVELING ---
+    let totalVolume = 0;
+    exercises.forEach(ex => {
+      // Reps might be a string like "10, 10, 8", we can just try to parse the first number or average. 
+      // For simplicity, let's assume it's a single number or we take the first number.
+      let reps = 0;
+      if (typeof ex.reps === 'string') {
+        const match = ex.reps.match(/\d+/);
+        if (match) reps = parseInt(match[0]);
+      } else {
+        reps = parseInt(ex.reps) || 0;
+      }
+      const weight = parseFloat(ex.weight) || 0;
+      const sets = parseInt(ex.sets) || 0;
+      totalVolume += (sets * reps * weight);
+    });
+    
+    const xpGained = 50 + Math.floor(totalVolume / 100);
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('xp, level')
+      .eq('id', session.user.id)
+      .single();
+      
+    const currentXp = profile?.xp || 0;
+    const newXp = currentXp + xpGained;
+    const newLevel = Math.floor(Math.sqrt(newXp / 100)) + 1; 
+
+    await supabase.from('profiles').update({ xp: newXp, level: newLevel }).eq('id', session.user.id);
+
+    // --- GAMIFICATION: PR CHECK ---
+    let prsHit = [];
+    for (const ex of exercises) {
+      if (!ex.name || !ex.weight || ex.weight <= 0) continue;
+      
+      const { data: pastEx } = await supabase
+        .from('exercises')
+        .select('weight, workouts!inner(user_id)')
+        .eq('name', ex.name)
+        .eq('workouts.user_id', session.user.id)
+        .lt('created_at', ex.created_at || new Date().toISOString()) 
+        .order('weight', { ascending: false })
+        .limit(1);
+
+      const pastMax = pastEx && pastEx.length > 0 ? parseFloat(pastEx[0].weight) : 0;
+      
+      if (parseFloat(ex.weight) > pastMax && pastMax > 0) {
+        prsHit.push({ name: ex.name, weight: ex.weight });
+      }
+    }
+
     // Add to Activity Feed
+    let feedAction = `crushed their ${routineName} workout! (+${xpGained} XP)`;
+    if (prsHit.length > 0) {
+      const prText = prsHit.map(pr => `${pr.name} (${pr.weight}kg)`).join(', ');
+      feedAction = `hit a PR on ${prText}! (+${xpGained} XP)`;
+      setPrMessages(prsHit);
+      setShowConfetti(true);
+      setTimeout(() => setShowConfetti(false), 5000);
+    }
+
     await supabase.from('activity_feed').insert([{
       user_id: session.user.id,
-      action: `crushed their ${routineName} workout!`
+      action: feedAction
     }]);
 
     // Uncheck all exercises on the template so it's ready for next week
@@ -161,7 +224,20 @@ export default function Workouts({ session }) {
   const allDone = exercises.length > 0 && completedCount === exercises.length;
 
   return (
-    <div className="flex-col gap-5 stagger-children" style={{ display: 'flex' }}>
+    <div className="flex-col gap-5 stagger-children" style={{ display: 'flex', position: 'relative' }}>
+      
+      {showConfetti && (
+        <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.8)' }}>
+          <div className="card" style={{ textAlign: 'center', animation: 'scaleIn 0.3s ease-out' }}>
+            <Trophy size={64} style={{ color: '#ffd700', margin: '0 auto var(--space-4)' }} />
+            <h2 style={{ fontSize: '2rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 'var(--space-2)' }}>NEW PR!</h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '1.125rem' }}>
+              {prMessages.map(pr => `${pr.name}: ${pr.weight}kg`).join(' • ')}
+            </p>
+          </div>
+        </div>
+      )}
+
       <header className="page-header">
         <h1 className="page-title">Today's Workout</h1>
         <p className="page-subtitle">

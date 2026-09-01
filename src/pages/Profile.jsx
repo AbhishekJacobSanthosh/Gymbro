@@ -8,6 +8,8 @@ export default function Profile({ session }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [displayName, setDisplayName] = useState('');
+  const [level, setLevel] = useState(1);
+  const [xp, setXp] = useState(0);
 
   useEffect(() => {
     let ignore = false;
@@ -17,7 +19,7 @@ export default function Profile({ session }) {
 
       const { data, error } = await supabase
         .from('profiles')
-        .select(`display_name`)
+        .select(`display_name, xp, level`)
         .eq('id', user.id)
         .single();
 
@@ -26,6 +28,8 @@ export default function Profile({ session }) {
           console.warn(error);
         } else if (data) {
           setDisplayName(data.display_name || '');
+          setXp(data.xp || 0);
+          setLevel(data.level || 1);
         }
       }
       setLoading(false);
@@ -88,7 +92,7 @@ export default function Profile({ session }) {
               )}
             </div>
           </div>
-          <div>
+          <div style={{ flex: 1 }}>
             <h2 style={{ fontSize: '1.125rem', fontWeight: 600 }}>
               {loading ? (
                 <span className="skeleton skeleton-text" style={{ width: '120px', display: 'inline-block' }} />
@@ -102,6 +106,27 @@ export default function Profile({ session }) {
                 {session?.user?.email}
               </p>
             </div>
+
+            {/* Gamification Stats */}
+            {!loading && (
+              <div style={{ marginTop: 'var(--space-4)', backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border)', padding: 'var(--space-3)', borderRadius: 'var(--radius-md)' }}>
+                <div className="flex justify-between items-center mb-2">
+                  <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--accent)' }}>Level {level}</span>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>{xp} XP total</span>
+                </div>
+                <div style={{ height: '6px', backgroundColor: 'var(--bg-elevated)', borderRadius: '3px', overflow: 'hidden' }}>
+                  <div style={{ 
+                    height: '100%', 
+                    width: `${Math.min(100, ((xp - (Math.pow(level - 1, 2) * 100)) / ((Math.pow(level, 2) * 100) - (Math.pow(level - 1, 2) * 100))) * 100)}%`, 
+                    backgroundColor: 'var(--accent)', 
+                    borderRadius: '3px' 
+                  }} />
+                </div>
+                <p style={{ fontSize: '0.6875rem', color: 'var(--text-tertiary)', textAlign: 'right', marginTop: 'var(--space-1)' }}>
+                  Next level: {Math.pow(level, 2) * 100} XP
+                </p>
+              </div>
+            )}
           </div>
         </div>
 
