@@ -57,6 +57,11 @@ export default function Workouts({ session }) {
   // Template State
   const [routineName, setRoutineName] = useState('Workout');
   const [isRestDay, setIsRestDay] = useState(false);
+  const [workoutId, setWorkoutId] = useState(null);
+
+  // Add Exercise State
+  const [newExercise, setNewExercise] = useState({ name: '', sets: '', reps: '', weight: '' });
+  const [addingExercise, setAddingExercise] = useState(false);
 
   useEffect(() => {
     fetchTodayWorkout();
@@ -79,9 +84,11 @@ export default function Workouts({ session }) {
       setRoutineName('No Template');
       setIsRestDay(false);
       setExercises([]);
+      setWorkoutId(null);
     } else {
       setRoutineName(templates[0].routine_name || 'Workout');
       setIsRestDay(templates[0].is_rest_day || false);
+      setWorkoutId(templates[0].id);
 
       // Fetch exercises for today's template
       const { data: exData } = await supabase
@@ -94,6 +101,62 @@ export default function Workouts({ session }) {
     }
 
     setLoading(false);
+  };
+
+  const handleStartSpontaneous = async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('workouts')
+      .insert([{
+        user_id: session.user.id,
+        day_of_week: today,
+        routine_name: 'Spontaneous Workout',
+        completed: false,
+        is_rest_day: false
+      }])
+      .select()
+      .single();
+      
+    if (!error && data) {
+      setWorkoutId(data.id);
+      setRoutineName(data.routine_name);
+      setIsRestDay(false);
+      setExercises([]);
+    } else {
+      toast?.error("Error starting workout.");
+    }
+    setLoading(false);
+  };
+
+  const handleAddExercise = async (e) => {
+    e.preventDefault();
+    if (!newExercise.name || !workoutId) return;
+
+    setAddingExercise(true);
+
+    const exerciseData = {
+      workout_id: workoutId,
+      name: newExercise.name,
+      sets: parseInt(newExercise.sets) || 0,
+      reps: newExercise.reps || '0',
+      weight: parseFloat(newExercise.weight) || 0,
+      completed: false
+    };
+
+    const { data: inserted, error } = await supabase
+      .from('exercises')
+      .insert([exerciseData])
+      .select()
+      .single();
+
+    if (!error && inserted) {
+      setExercises([...exercises, inserted]);
+      setNewExercise({ name: '', sets: '', reps: '', weight: '' });
+    } else {
+      toast?.error("Error adding exercise.");
+    }
+
+    setAddingExercise(false);
   };
 
   const toggleComplete = async (id, currentStatus) => {
@@ -124,7 +187,7 @@ export default function Workouts({ session }) {
     if (!allDone) return;
     setFinishing(true);
 
-    const { error: wError } = await supabase
+    const { error: wError, data: newWorkout } = await supabase
       .from('workouts')
       .insert([{
         user_id: session.user.id,
@@ -132,12 +195,26 @@ export default function Workouts({ session }) {
         routine_name: routineName,
         completed: true,
         completed_at: new Date()
-      }]);
+      }])
+      .select()
+      .single();
 
-    if (wError) {
+    if (wError || !newWorkout) {
       toast?.error("Error finishing workout. Please try again.");
       setFinishing(false);
       return;
+    }
+
+    if (exercises.length > 0) {
+      const completedExercises = exercises.map(ex => ({
+        workout_id: newWorkout.id,
+        name: ex.name,
+        sets: parseInt(ex.sets) || 0,
+        reps: ex.reps || '0',
+        weight: parseFloat(ex.weight) || 0,
+        completed: true
+      }));
+      await supabase.from('exercises').insert(completedExercises);
     }
 
     // --- GAMIFICATION: XP & LEVELING ---
@@ -208,13 +285,20 @@ export default function Workouts({ session }) {
     }]);
 
     // Uncheck all exercises on the template so it's ready for next week
-    for (const ex of exercises) {
-      if (ex.completed) {
-        await supabase.from('exercises').update({ completed: false }).eq('id', ex.id);
+    if (routineName === 'Spontaneous Workout' && workoutId) {
+      await supabase.from('workouts').delete().eq('id', workoutId);
+      setWorkoutId(null);
+      setExercises([]);
+      setRoutineName('No Template');
+    } else {
+      for (const ex of exercises) {
+        if (ex.completed) {
+          await supabase.from('exercises').update({ completed: false }).eq('id', ex.id);
+        }
       }
+      setExercises(exercises.map(ex => ({ ...ex, completed: false })));
     }
-
-    setExercises(exercises.map(ex => ({ ...ex, completed: false })));
+    
     setFinishing(false);
 
     toast?.success(`🎉 ${routineName} workout logged! Great work!`);
@@ -286,16 +370,25 @@ export default function Workouts({ session }) {
                   </div>
                 </div>
               </div>
-            ) : exercises.length === 0 ? (
+            ) : !workoutId ? (
               <div className="empty-state">
                 <Dumbbell size={36} className="empty-state-icon" />
                 <p className="empty-state-title">No exercises planned</p>
                 <p className="empty-state-text">Go to the Planner to set up your templates for {today}.</p>
+                <button onClick={handleStartSpontaneous} className="btn btn-primary" style={{ marginTop: 'var(--space-4)' }}>
+                  Start Spontaneous Workout
+                </button>
               </div>
             ) : (
               <>
-                <div className="flex-col" style={{ display: 'flex' }}>
-                  {exercises.map(ex => (
+                {exercises.length === 0 ? (
+                  <div className="empty-state" style={{ padding: 'var(--space-6) 0' }}>
+                    <p className="empty-state-title">Ready to sweat?</p>
+                    <p className="empty-state-text">Add your first exercise below to get started.</p>
+                  </div>
+                ) : (
+                  <div className="flex-col" style={{ display: 'flex' }}>
+                    {exercises.map(ex => (
                     <div
                       key={ex.id}
                       className="exercise-row"
@@ -347,8 +440,65 @@ export default function Workouts({ session }) {
                      </div>
                    ))}
                  </div>
+                 )}
 
-                 {/* Finish Workout CTA */}
+                {/* Add Exercise Form */}
+                <div style={{ borderTop: '1px solid var(--divider)', paddingTop: 'var(--space-6)', marginTop: 'var(--space-6)' }}>
+                  <p className="text-label mb-3">Quick Add</p>
+                  <form onSubmit={handleAddExercise} className="flex gap-2 flex-wrap items-end">
+                    <div style={{ flex: '1 1 150px' }}>
+                      <input
+                        type="text"
+                        placeholder="Exercise Name"
+                        value={newExercise.name}
+                        onChange={e => setNewExercise({ ...newExercise, name: e.target.value })}
+                        required
+                        className="exercise-inline-input"
+                        style={{ width: '100%', padding: '0.5rem', backgroundColor: 'var(--bg-elevated)' }}
+                      />
+                    </div>
+                    <div style={{ flex: '0 1 72px' }}>
+                      <input
+                        type="number"
+                        min="1"
+                        placeholder="Sets"
+                        value={newExercise.sets}
+                        onChange={e => setNewExercise({ ...newExercise, sets: e.target.value })}
+                        required
+                        className="exercise-inline-input"
+                        style={{ width: '100%', padding: '0.5rem', backgroundColor: 'var(--bg-elevated)' }}
+                      />
+                    </div>
+                    <div style={{ flex: '0 1 72px' }}>
+                      <input
+                        type="text"
+                        placeholder="Reps"
+                        value={newExercise.reps}
+                        onChange={e => setNewExercise({ ...newExercise, reps: e.target.value })}
+                        required
+                        className="exercise-inline-input"
+                        style={{ width: '100%', padding: '0.5rem', backgroundColor: 'var(--bg-elevated)' }}
+                      />
+                    </div>
+                    <div style={{ flex: '0 1 72px' }}>
+                      <input
+                        type="number"
+                        step="0.5"
+                        placeholder="kg"
+                        value={newExercise.weight}
+                        onChange={e => setNewExercise({ ...newExercise, weight: e.target.value })}
+                        required
+                        className="exercise-inline-input"
+                        style={{ width: '100%', padding: '0.5rem', backgroundColor: 'var(--bg-elevated)' }}
+                      />
+                    </div>
+                    <button type="submit" className="btn btn-primary" disabled={addingExercise} style={{ padding: '0.5rem', height: '36px' }}>
+                      {addingExercise ? <Loader2 size={18} className="animate-spin" /> : <span style={{ fontWeight: 'bold' }}>+</span>}
+                    </button>
+                  </form>
+                </div>
+
+                {/* Finish Workout CTA */}
                  <div style={{ textAlign: 'center', marginTop: 'var(--space-8)' }}>
                    <button
                      onClick={finishWorkout}

@@ -180,7 +180,7 @@ export default function Templates({ session }) {
         <p className="page-subtitle">Build your weekly templates and edit exercises.</p>
       </header>
 
-      <div style={{ display: 'flex', gap: 'var(--space-6)', flexWrap: 'wrap', alignItems: 'flex-start', flexDirection: 'row-reverse' }}>
+      <div className="planner-layout">
         
         {/* Right Sidebar: Weekly Overview */}
         <div className="planner-sidebar">

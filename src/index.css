@@ -1816,3 +1816,29 @@ a:focus-visible {
   white-space: nowrap;
   border-width: 0;
 }
+
+/* ---- Planner Specific ---- */
+.planner-layout {
+  display: flex;
+  gap: var(--space-6);
+  flex-direction: column-reverse;
+}
+
+@media (min-width: 768px) {
+  .planner-layout {
+    flex-direction: row-reverse;
+    align-items: flex-start;
+  }
+}
+
+.day-selector {
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  padding-bottom: var(--space-2);
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+.day-selector::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
