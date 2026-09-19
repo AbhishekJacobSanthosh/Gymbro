@@ -136,7 +136,7 @@ export default function Home({ session }) {
         profiles!inner(display_name)
       `)
       .order('created_at', { ascending: false })
-      .limit(10);
+      .limit(5);
 
     if (acts) {
       setActivities(acts.map(a => ({

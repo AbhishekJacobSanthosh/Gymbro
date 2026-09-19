@@ -16,7 +16,7 @@ export default function Templates({ session }) {
   const [isRestDay, setIsRestDay] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
 
-  const [newExercise, setNewExercise] = useState({ name: '', sets: '', reps: '', weight: '' });
+  const [newExercise, setNewExercise] = useState({ name: '', sets: '', reps: '', weight: '', minutes: '' });
   const [addingExercise, setAddingExercise] = useState(false);
 
   // Weekly Overview State
@@ -130,6 +130,7 @@ export default function Templates({ session }) {
       sets: parseInt(newExercise.sets) || 0,
       reps: newExercise.reps || '0',
       weight: parseFloat(newExercise.weight) || 0,
+      minutes: parseInt(newExercise.minutes) || 0,
       completed: false
     };
 
@@ -141,7 +142,7 @@ export default function Templates({ session }) {
 
     if (!error && inserted) {
       setExercises([...exercises, inserted]);
-      setNewExercise({ name: '', sets: '', reps: '', weight: '' });
+      setNewExercise({ name: '', sets: '', reps: '', weight: '', minutes: '' });
     }
 
     setAddingExercise(false);
@@ -154,7 +155,7 @@ export default function Templates({ session }) {
   const handleBlurSave = async (id, field, value) => {
     // If empty or invalid, fallback to 0 to prevent errors
     let finalValue = value;
-    if (field === 'sets') finalValue = parseInt(value) || 0;
+    if (field === 'sets' || field === 'minutes') finalValue = parseInt(value) || 0;
     if (field === 'weight') finalValue = parseFloat(value) || 0;
 
     await supabase.from('exercises').update({ [field]: finalValue }).eq('id', id);
@@ -334,6 +335,14 @@ export default function Templates({ session }) {
                                 style={{ flex: 1, minWidth: 0, textAlign: 'center', padding: '0.5rem 0.25rem' }}
                                 placeholder="kg"
                               />
+                              <input
+                                type="number"
+                                value={ex.minutes || ''}
+                                onChange={e => handleLocalChange(ex.id, 'minutes', e.target.value)}
+                                onBlur={e => handleBlurSave(ex.id, 'minutes', e.target.value)}
+                                style={{ flex: 1, minWidth: 0, textAlign: 'center', padding: '0.5rem 0.25rem' }}
+                                placeholder="Mins"
+                              />
                               <button
                                 onClick={() => removeExercise(ex.id)}
                                 className="btn-icon btn-danger"
@@ -384,6 +393,14 @@ export default function Templates({ session }) {
                             placeholder="kg"
                             value={newExercise.weight}
                             onChange={e => setNewExercise({ ...newExercise, weight: e.target.value })}
+                          />
+                        </div>
+                        <div style={{ flex: '0 1 72px' }}>
+                          <input
+                            type="number"
+                            placeholder="Mins"
+                            value={newExercise.minutes}
+                            onChange={e => setNewExercise({ ...newExercise, minutes: e.target.value })}
                           />
                         </div>
                         <button type="submit" className="btn btn-primary" disabled={addingExercise}>

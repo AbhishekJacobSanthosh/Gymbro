@@ -18,11 +18,9 @@ export default function Calendar({ session }) {
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
   const blanks = Array.from({ length: startDay }, (_, i) => i);
 
-  const [profiles, setProfiles] = useState({
-    you: { id: session?.user?.id, name: 'You', color: 'var(--accent)', streak: 0, total: 0 },
-    sister: { id: null, name: 'Partner', color: 'var(--success)', streak: 0, total: 0 }
-  });
+  const COLORS = ['#ff7854', '#4ade80', '#60a5fa', '#c084fc', '#facc15', '#f472b6'];
 
+  const [profiles, setProfiles] = useState([]);
   const [activityData, setActivityData] = useState({});
 
   // Modal State
@@ -42,21 +40,21 @@ export default function Calendar({ session }) {
     setLoading(true);
 
     try {
-      // 1. Fetch all profiles to find sister
+      // 1. Fetch all profiles
       const { data: allProfiles } = await supabase.from('profiles').select('*');
 
-      let youProfile = { ...profiles.you };
-      let sisterProfile = { ...profiles.sister };
-
-      if (allProfiles) {
-        const youData = allProfiles.find(p => p.id === session.user.id);
-        const sisterData = allProfiles.find(p => p.id !== session.user.id);
-
-        if (youData) youProfile.name = youData.display_name || 'You';
-        if (sisterData) {
-          sisterProfile.id = sisterData.id;
-          sisterProfile.name = sisterData.display_name || 'Partner';
-        }
+      let profileList = [];
+      if (allProfiles && allProfiles.length > 0) {
+        profileList = allProfiles.map((p, index) => ({
+          id: p.id,
+          name: p.display_name || (p.id === session.user.id ? 'You' : `User ${index + 1}`),
+          color: COLORS[index % COLORS.length],
+          streak: 0,
+          total: 0
+        }));
+      } else {
+        // fallback if no profiles exist
+        profileList = [{ id: session.user.id, name: 'You', color: COLORS[0], streak: 0, total: 0 }];
       }
 
       // 2. Fetch all completed workouts for the current month
@@ -77,17 +75,17 @@ export default function Calendar({ session }) {
         .eq('completed', true)
         .order('completed_at', { ascending: false });
 
+      const profileIds = profileList.map(p => p.id);
+
       // Fetch active templates to determine rest days
       const { data: allTemplates } = await supabase
         .from('workouts')
         .select('user_id, day_of_week, is_rest_day, created_at')
         .eq('completed', false)
-        .in('user_id', [youProfile.id, sisterProfile.id].filter(Boolean));
+        .in('user_id', profileIds);
 
-      const userRestDays = {
-        [youProfile.id]: new Set(),
-        [sisterProfile.id]: new Set()
-      };
+      const userRestDays = {};
+      profileIds.forEach(id => userRestDays[id] = new Set());
 
       if (allTemplates) {
         allTemplates.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
@@ -103,10 +101,10 @@ export default function Calendar({ session }) {
         });
       }
 
-      // Process workouts into activityData map: { dayNumber: ['you', 'sister'] }
+      // Process workouts into activityData map: { dayNumber: [userId, userId, ...] }
       let newActivityData = {};
-      let youTotal = 0;
-      let sisterTotal = 0;
+      const userTotals = {};
+      profileIds.forEach(id => userTotals[id] = 0);
 
       if (workouts) {
         workouts.forEach(w => {
@@ -117,12 +115,13 @@ export default function Calendar({ session }) {
             newActivityData[dayNum] = [];
           }
 
-          if (w.user_id === youProfile.id) {
-            if (!newActivityData[dayNum].includes('you')) newActivityData[dayNum].push('you');
-            youTotal++;
-          } else if (w.user_id === sisterProfile.id) {
-            if (!newActivityData[dayNum].includes('sister')) newActivityData[dayNum].push('sister');
-            sisterTotal++;
+          if (profileIds.includes(w.user_id)) {
+            if (!newActivityData[dayNum].includes(w.user_id)) {
+              newActivityData[dayNum].push(w.user_id);
+            }
+            if (userTotals[w.user_id] !== undefined) {
+              userTotals[w.user_id]++;
+            }
           }
         });
       }
@@ -166,14 +165,15 @@ export default function Calendar({ session }) {
       };
 
       if (allWorkouts) {
-        youProfile.streak = calculateStreak(allWorkouts.filter(w => w.user_id === youProfile.id), userRestDays[youProfile.id]);
-        sisterProfile.streak = calculateStreak(allWorkouts.filter(w => w.user_id === sisterProfile.id), userRestDays[sisterProfile.id]);
+        profileList.forEach(p => {
+          p.streak = calculateStreak(allWorkouts.filter(w => w.user_id === p.id), userRestDays[p.id]);
+          p.total = userTotals[p.id] || 0;
+        });
       }
 
-      youProfile.total = youTotal;
-      sisterProfile.total = sisterTotal;
+      profileList.sort((a, b) => b.streak - a.streak);
 
-      setProfiles({ you: youProfile, sister: sisterProfile });
+      setProfiles(profileList);
       setActivityData(newActivityData);
 
     } catch (error) {
@@ -345,12 +345,11 @@ export default function Calendar({ session }) {
                     >
                       <span>{day}</span>
                       <div className="calendar-dots">
-                        {youCompleted && (
-                          <div className="calendar-dot" style={{ backgroundColor: profiles.you.color }} title={profiles.you.name} />
-                        )}
-                        {sisterCompleted && (
-                          <div className="calendar-dot" style={{ backgroundColor: profiles.sister.color }} title={profiles.sister.name} />
-                        )}
+                        {activityData[day] && activityData[day].map(userId => {
+                          const p = profiles.find(profile => profile.id === userId);
+                          if (!p) return null;
+                          return <div key={userId} className="calendar-dot" style={{ backgroundColor: p.color }} title={p.name} />;
+                        })}
                       </div>
                     </div>
                   );
@@ -361,76 +360,46 @@ export default function Calendar({ session }) {
 
           {/* Sidebar: Leaderboard */}
           <div style={{ flex: '1 1 240px', display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-            {/* You */}
-            <div className="card user-stat-card" style={{ paddingLeft: 'calc(var(--space-6) + 3px)' }}>
-              <style>{`.user-stat-card:first-child::before { background: var(--accent-gradient); }`}</style>
-              <div className="flex items-center gap-3 mb-4">
-                <div style={{
-                  width: '36px', height: '36px', borderRadius: 'var(--radius-full)',
-                  background: 'var(--accent-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: '0.875rem', fontWeight: 700, color: 'var(--accent)'
-                }}>
-                  {getInitial(profiles.you.name)}
+            {profiles.map((p, index) => (
+              <div key={p.id} className="card user-stat-card" style={{ paddingLeft: 'calc(var(--space-6) + 3px)', position: 'relative' }}>
+                <style>{`.user-stat-card-${p.id}::before { background: ${p.color}; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; content: ''; border-radius: var(--radius-md) 0 0 var(--radius-md); }`}</style>
+                <div className={`user-stat-card-${p.id}`} />
+                <div className="flex items-center gap-3 mb-4">
+                  <div style={{
+                    width: '36px', height: '36px', borderRadius: 'var(--radius-full)',
+                    background: `${p.color}20`, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '0.875rem', fontWeight: 700, color: p.color
+                  }}>
+                    {getInitial(p.name)}
+                  </div>
+                  <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>{p.name}</h3>
                 </div>
-                <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>{profiles.you.name}</h3>
-              </div>
-              <div className="flex justify-between items-center mb-3">
-                <span style={{ color: 'var(--text-tertiary)', fontSize: '0.8125rem' }}>Active Streak</span>
-                <div className="flex items-center gap-1">
-                  <strong style={{ fontSize: '0.875rem', color: profiles.you.streak > 0 ? 'var(--accent)' : 'var(--text-tertiary)' }}>
-                    {profiles.you.streak > 0 ? '🔥' : '💤'} {profiles.you.streak}
-                  </strong>
+                <div className="flex justify-between items-center mb-3">
+                  <span style={{ color: 'var(--text-tertiary)', fontSize: '0.8125rem' }}>Active Streak</span>
+                  <div className="flex items-center gap-1">
+                    <strong style={{ fontSize: '0.875rem', color: p.streak > 0 ? p.color : 'var(--text-tertiary)' }}>
+                      {p.streak > 0 ? '🔥' : '💤'} {p.streak}
+                    </strong>
+                  </div>
                 </div>
-              </div>
-              <div className="flex justify-between items-center">
-                <span style={{ color: 'var(--text-tertiary)', fontSize: '0.8125rem' }}>This Month</span>
-                <div className="flex items-center gap-1">
-                  <CheckCircle size={14} style={{ color: 'var(--success)' }} />
-                  <strong style={{ fontSize: '0.875rem' }}>{profiles.you.total}</strong>
-                </div>
-              </div>
-            </div>
-
-            {/* Partner */}
-            <div className="card user-stat-card" style={{ paddingLeft: 'calc(var(--space-6) + 3px)' }}>
-              <style>{`.user-stat-card:nth-child(2)::before { background: var(--success); }`}</style>
-              <div className="flex items-center gap-3 mb-4">
-                <div style={{
-                  width: '36px', height: '36px', borderRadius: 'var(--radius-full)',
-                  background: 'var(--success-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: '0.875rem', fontWeight: 700, color: 'var(--success)'
-                }}>
-                  {getInitial(profiles.sister.name)}
-                </div>
-                <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>{profiles.sister.name}</h3>
-              </div>
-              <div className="flex justify-between items-center mb-3">
-                <span style={{ color: 'var(--text-tertiary)', fontSize: '0.8125rem' }}>Active Streak</span>
-                <div className="flex items-center gap-1">
-                  <strong style={{ fontSize: '0.875rem', color: profiles.sister.streak > 0 ? 'var(--success)' : 'var(--text-tertiary)' }}>
-                    {profiles.sister.streak > 0 ? '🔥' : '💤'} {profiles.sister.streak}
-                  </strong>
+                <div className="flex justify-between items-center">
+                  <span style={{ color: 'var(--text-tertiary)', fontSize: '0.8125rem' }}>This Month</span>
+                  <div className="flex items-center gap-1">
+                    <CheckCircle size={14} style={{ color: p.color }} />
+                    <strong style={{ fontSize: '0.875rem' }}>{p.total}</strong>
+                  </div>
                 </div>
               </div>
-              <div className="flex justify-between items-center">
-                <span style={{ color: 'var(--text-tertiary)', fontSize: '0.8125rem' }}>This Month</span>
-                <div className="flex items-center gap-1">
-                  <CheckCircle size={14} style={{ color: 'var(--success)' }} />
-                  <strong style={{ fontSize: '0.875rem' }}>{profiles.sister.total}</strong>
-                </div>
-              </div>
-            </div>
+            ))}
 
             {/* Legend */}
-            <div style={{ display: 'flex', gap: 'var(--space-4)', padding: 'var(--space-3)', justifyContent: 'center' }}>
-              <div className="flex items-center gap-2">
-                <div className="calendar-dot" style={{ backgroundColor: profiles.you.color, width: '8px', height: '8px' }} />
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>{profiles.you.name}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="calendar-dot" style={{ backgroundColor: profiles.sister.color, width: '8px', height: '8px' }} />
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>{profiles.sister.name}</span>
-              </div>
+            <div style={{ display: 'flex', gap: 'var(--space-4)', padding: 'var(--space-3)', justifyContent: 'center', flexWrap: 'wrap' }}>
+              {profiles.map(p => (
+                <div key={p.id} className="flex items-center gap-2">
+                  <div className="calendar-dot" style={{ backgroundColor: p.color, width: '8px', height: '8px' }} />
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>{p.name}</span>
+                </div>
+              ))}
             </div>
           </div>
         </div>

@@ -60,7 +60,7 @@ export default function Workouts({ session }) {
   const [workoutId, setWorkoutId] = useState(null);
 
   // Add Exercise State
-  const [newExercise, setNewExercise] = useState({ name: '', sets: '', reps: '', weight: '' });
+  const [newExercise, setNewExercise] = useState({ name: '', sets: '', reps: '', weight: '', minutes: '' });
   const [addingExercise, setAddingExercise] = useState(false);
 
   useEffect(() => {
@@ -140,6 +140,7 @@ export default function Workouts({ session }) {
       sets: parseInt(newExercise.sets) || 0,
       reps: newExercise.reps || '0',
       weight: parseFloat(newExercise.weight) || 0,
+      minutes: parseInt(newExercise.minutes) || 0,
       completed: false
     };
 
@@ -151,7 +152,7 @@ export default function Workouts({ session }) {
 
     if (!error && inserted) {
       setExercises([...exercises, inserted]);
-      setNewExercise({ name: '', sets: '', reps: '', weight: '' });
+      setNewExercise({ name: '', sets: '', reps: '', weight: '', minutes: '' });
     } else {
       toast?.error("Error adding exercise.");
     }
@@ -178,6 +179,7 @@ export default function Workouts({ session }) {
 
   const handleBlurSave = async (id, field, value) => {
     let finalValue = value;
+    if (field === 'sets' || field === 'minutes') finalValue = parseInt(value) || 0;
     if (field === 'weight') finalValue = parseFloat(value) || 0;
 
     await supabase.from('exercises').update({ [field]: finalValue }).eq('id', id);
@@ -212,6 +214,7 @@ export default function Workouts({ session }) {
         sets: parseInt(ex.sets) || 0,
         reps: ex.reps || '0',
         weight: parseFloat(ex.weight) || 0,
+        minutes: parseInt(ex.minutes) || 0,
         completed: true
       }));
       await supabase.from('exercises').insert(completedExercises);
@@ -406,10 +409,21 @@ export default function Workouts({ session }) {
                            {ex.name}
                          </h3>
 
-                         {(ex.sets > 0 || ex.weight > 0 || (ex.reps && ex.reps !== '0')) && (
+                         {(ex.sets > 0 || ex.weight > 0 || (ex.reps && ex.reps !== '0') || ex.minutes > 0) && (
                            <div className="exercise-meta">
-                             <span style={{ fontWeight: 500 }}>{ex.sets} Sets</span>
-                             <div className="exercise-meta-dot" />
+                             {ex.sets > 0 && (
+                               <>
+                                 <span style={{ fontWeight: 500 }}>{ex.sets} Sets</span>
+                                 <div className="exercise-meta-dot" />
+                               </>
+                             )}
+
+                             {ex.minutes > 0 && (
+                               <>
+                                 <span style={{ fontWeight: 500 }}>{ex.minutes} Mins</span>
+                                 <div className="exercise-meta-dot" />
+                               </>
+                             )}
 
                              <div className="flex items-center gap-1">
                                <input
@@ -487,6 +501,16 @@ export default function Workouts({ session }) {
                         placeholder="kg"
                         value={newExercise.weight}
                         onChange={e => setNewExercise({ ...newExercise, weight: e.target.value })}
+                        className="exercise-inline-input"
+                        style={{ width: '100%', padding: '0.5rem', backgroundColor: 'var(--bg-elevated)' }}
+                      />
+                    </div>
+                    <div style={{ flex: '0 1 72px' }}>
+                      <input
+                        type="number"
+                        placeholder="Mins"
+                        value={newExercise.minutes}
+                        onChange={e => setNewExercise({ ...newExercise, minutes: e.target.value })}
                         className="exercise-inline-input"
                         style={{ width: '100%', padding: '0.5rem', backgroundColor: 'var(--bg-elevated)' }}
                       />
