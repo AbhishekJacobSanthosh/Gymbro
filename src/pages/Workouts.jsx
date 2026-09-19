@@ -406,36 +406,38 @@ export default function Workouts({ session }) {
                            {ex.name}
                          </h3>
 
-                         <div className="exercise-meta">
-                           <span style={{ fontWeight: 500 }}>{ex.sets} Sets</span>
-                           <div className="exercise-meta-dot" />
+                         {(ex.sets > 0 || ex.weight > 0 || (ex.reps && ex.reps !== '0')) && (
+                           <div className="exercise-meta">
+                             <span style={{ fontWeight: 500 }}>{ex.sets} Sets</span>
+                             <div className="exercise-meta-dot" />
 
-                           <div className="flex items-center gap-1">
-                             <input
-                               type="text"
-                               value={ex.reps}
-                               onChange={e => handleLocalChange(ex.id, 'reps', e.target.value)}
-                               onBlur={e => handleBlurSave(ex.id, 'reps', e.target.value)}
-                               className="exercise-inline-input"
-                             />
-                             <span>Reps</span>
+                             <div className="flex items-center gap-1">
+                               <input
+                                 type="text"
+                                 value={ex.reps}
+                                 onChange={e => handleLocalChange(ex.id, 'reps', e.target.value)}
+                                 onBlur={e => handleBlurSave(ex.id, 'reps', e.target.value)}
+                                 className="exercise-inline-input"
+                               />
+                               <span>Reps</span>
+                             </div>
+
+                             <div className="exercise-meta-dot" />
+
+                             <div className="flex items-center gap-1">
+                               <input
+                                 type="number"
+                                 step="0.5"
+                                 value={ex.weight}
+                                 onChange={e => handleLocalChange(ex.id, 'weight', e.target.value)}
+                                 onBlur={e => handleBlurSave(ex.id, 'weight', e.target.value)}
+                                 className="exercise-inline-input"
+                                 style={{ width: '50px' }}
+                               />
+                               <span>kg</span>
+                             </div>
                            </div>
-
-                           <div className="exercise-meta-dot" />
-
-                           <div className="flex items-center gap-1">
-                             <input
-                               type="number"
-                               step="0.5"
-                               value={ex.weight}
-                               onChange={e => handleLocalChange(ex.id, 'weight', e.target.value)}
-                               onBlur={e => handleBlurSave(ex.id, 'weight', e.target.value)}
-                               className="exercise-inline-input"
-                               style={{ width: '50px' }}
-                             />
-                             <span>kg</span>
-                           </div>
-                         </div>
+                         )}
                        </div>
                      </div>
                    ))}
@@ -460,11 +462,10 @@ export default function Workouts({ session }) {
                     <div style={{ flex: '0 1 72px' }}>
                       <input
                         type="number"
-                        min="1"
+                        min="0"
                         placeholder="Sets"
                         value={newExercise.sets}
                         onChange={e => setNewExercise({ ...newExercise, sets: e.target.value })}
-                        required
                         className="exercise-inline-input"
                         style={{ width: '100%', padding: '0.5rem', backgroundColor: 'var(--bg-elevated)' }}
                       />
@@ -475,7 +476,6 @@ export default function Workouts({ session }) {
                         placeholder="Reps"
                         value={newExercise.reps}
                         onChange={e => setNewExercise({ ...newExercise, reps: e.target.value })}
-                        required
                         className="exercise-inline-input"
                         style={{ width: '100%', padding: '0.5rem', backgroundColor: 'var(--bg-elevated)' }}
                       />
@@ -487,7 +487,6 @@ export default function Workouts({ session }) {
                         placeholder="kg"
                         value={newExercise.weight}
                         onChange={e => setNewExercise({ ...newExercise, weight: e.target.value })}
-                        required
                         className="exercise-inline-input"
                         style={{ width: '100%', padding: '0.5rem', backgroundColor: 'var(--bg-elevated)' }}
                       />

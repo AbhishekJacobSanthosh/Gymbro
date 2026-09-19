@@ -363,11 +363,10 @@ export default function Templates({ session }) {
                         <div style={{ flex: '0 1 72px' }}>
                           <input
                             type="number"
-                            min="1"
+                            min="0"
                             placeholder="Sets"
                             value={newExercise.sets}
                             onChange={e => setNewExercise({ ...newExercise, sets: e.target.value })}
-                            required
                           />
                         </div>
                         <div style={{ flex: '0 1 72px' }}>
@@ -376,7 +375,6 @@ export default function Templates({ session }) {
                             placeholder="Reps"
                             value={newExercise.reps}
                             onChange={e => setNewExercise({ ...newExercise, reps: e.target.value })}
-                            required
                           />
                         </div>
                         <div style={{ flex: '0 1 72px' }}>
@@ -386,7 +384,6 @@ export default function Templates({ session }) {
                             placeholder="kg"
                             value={newExercise.weight}
                             onChange={e => setNewExercise({ ...newExercise, weight: e.target.value })}
-                            required
                           />
                         </div>
                         <button type="submit" className="btn btn-primary" disabled={addingExercise}>
