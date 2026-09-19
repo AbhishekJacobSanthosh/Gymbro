@@ -49,12 +49,14 @@ export default function Calendar({ session }) {
           id: p.id,
           name: p.display_name || (p.id === session.user.id ? 'You' : `User ${index + 1}`),
           color: COLORS[index % COLORS.length],
+          level: p.level || 1,
+          xp: p.xp || 0,
           streak: 0,
           total: 0
         }));
       } else {
         // fallback if no profiles exist
-        profileList = [{ id: session.user.id, name: 'You', color: COLORS[0], streak: 0, total: 0 }];
+        profileList = [{ id: session.user.id, name: 'You', color: COLORS[0], level: 1, xp: 0, streak: 0, total: 0 }];
       }
 
       // 2. Fetch all completed workouts for the current month
@@ -171,7 +173,11 @@ export default function Calendar({ session }) {
         });
       }
 
-      profileList.sort((a, b) => b.streak - a.streak);
+      profileList.sort((a, b) => {
+        if (b.level !== a.level) return b.level - a.level;
+        if (b.xp !== a.xp) return b.xp - a.xp;
+        return b.streak - a.streak;
+      });
 
       setProfiles(profileList);
       setActivityData(newActivityData);
@@ -360,37 +366,42 @@ export default function Calendar({ session }) {
 
           {/* Sidebar: Leaderboard */}
           <div style={{ flex: '1 1 240px', display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-            {profiles.map((p, index) => (
-              <div key={p.id} className="card user-stat-card" style={{ paddingLeft: 'calc(var(--space-6) + 3px)', position: 'relative' }}>
-                <style>{`.user-stat-card-${p.id}::before { background: ${p.color}; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; content: ''; border-radius: var(--radius-md) 0 0 var(--radius-md); }`}</style>
-                <div className={`user-stat-card-${p.id}`} />
-                <div className="flex items-center gap-3 mb-4">
-                  <div style={{
-                    width: '36px', height: '36px', borderRadius: 'var(--radius-full)',
-                    background: `${p.color}20`, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: '0.875rem', fontWeight: 700, color: p.color
-                  }}>
-                    {getInitial(p.name)}
-                  </div>
-                  <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>{p.name}</h3>
-                </div>
-                <div className="flex justify-between items-center mb-3">
-                  <span style={{ color: 'var(--text-tertiary)', fontSize: '0.8125rem' }}>Active Streak</span>
-                  <div className="flex items-center gap-1">
-                    <strong style={{ fontSize: '0.875rem', color: p.streak > 0 ? p.color : 'var(--text-tertiary)' }}>
-                      {p.streak > 0 ? '🔥' : '💤'} {p.streak}
-                    </strong>
-                  </div>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span style={{ color: 'var(--text-tertiary)', fontSize: '0.8125rem' }}>This Month</span>
-                  <div className="flex items-center gap-1">
-                    <CheckCircle size={14} style={{ color: p.color }} />
-                    <strong style={{ fontSize: '0.875rem' }}>{p.total}</strong>
-                  </div>
-                </div>
+            <div className="card" style={{ padding: 'var(--space-5)' }}>
+              <div className="flex items-center gap-2 mb-5">
+                <Flame size={18} style={{ color: 'var(--accent)' }} />
+                <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>Leaderboard</h3>
               </div>
-            ))}
+              <div className="flex-col" style={{ display: 'flex', gap: '16px' }}>
+                {profiles.map((p, index) => (
+                  <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div className="flex items-center gap-3">
+                      <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-tertiary)', width: '16px' }}>
+                        {index + 1}
+                      </span>
+                      <div style={{
+                        width: '32px', height: '32px', borderRadius: 'var(--radius-full)',
+                        background: `${p.color}20`, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '0.8125rem', fontWeight: 700, color: p.color
+                      }}>
+                        {getInitial(p.name)}
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>{p.name}</span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>Lvl {p.level} • {p.xp} XP</span>
+                      </div>
+                    </div>
+                    {p.streak > 0 ? (
+                      <div className="flex items-center gap-1" title={`${p.streak} Day Streak`}>
+                        <Flame size={14} style={{ color: p.color }} />
+                        <span style={{ fontSize: '0.75rem', fontWeight: 700, color: p.color }}>{p.streak}</span>
+                      </div>
+                    ) : (
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>💤</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
 
             {/* Legend */}
             <div style={{ display: 'flex', gap: 'var(--space-4)', padding: 'var(--space-3)', justifyContent: 'center', flexWrap: 'wrap' }}>
