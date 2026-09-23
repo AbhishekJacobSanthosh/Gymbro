@@ -34,12 +34,6 @@ function ToastProvider({ children }) {
     }, duration);
   }, []);
 
-  const toast = useCallback({
-    success: (msg) => addToast(msg, 'success'),
-    error: (msg) => addToast(msg, 'error'),
-    info: (msg) => addToast(msg, 'info'),
-  }, [addToast]);
-
   // Make toast callable as toast.success(), etc.
   const toastApi = {
     success: (msg) => addToast(msg, 'success'),

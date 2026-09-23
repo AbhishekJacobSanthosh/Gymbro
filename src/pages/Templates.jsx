@@ -37,12 +37,15 @@ export default function Templates({ session }) {
       .select('day_of_week, routine_name, is_rest_day')
       .eq('user_id', session.user.id)
       .eq('completed', false)
-      .order('created_at', { ascending: true });
+      .neq('routine_name', 'Spontaneous Workout')
+      .order('created_at', { ascending: false });
 
     if (data) {
       const overview = {};
       data.forEach(t => {
-        overview[t.day_of_week] = t.is_rest_day ? 'Rest' : (t.routine_name || 'Workout');
+        if (!overview[t.day_of_week]) {
+          overview[t.day_of_week] = t.is_rest_day ? 'Rest' : (t.routine_name || 'Workout');
+        }
       });
       setWeeklyOverview(overview);
     }
@@ -59,6 +62,7 @@ export default function Templates({ session }) {
       .eq('user_id', session.user.id)
       .eq('day_of_week', day)
       .eq('completed', false)
+      .neq('routine_name', 'Spontaneous Workout')
       .order('created_at', { ascending: false })
       .limit(1);
 

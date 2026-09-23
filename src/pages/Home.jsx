@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { supabase } from '../lib/supabase';
 import { TrendingDown, Activity, Trophy, Flame, CheckCircle, Snowflake, X } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { useToast } from '../App';
+import { getGreeting, getRelativeTime, calculateStreak } from '../lib/utils';
 
 const quotes = [
   "The only bad workout is the one that didn't happen.",
@@ -12,27 +15,7 @@ const quotes = [
   "Motivation is what gets you started. Habit is what keeps you going."
 ];
 
-function getGreeting() {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  return 'Good evening';
-}
 
-function getRelativeTime(dateStr) {
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diffMs = now - date;
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString();
-}
 
 const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
@@ -50,7 +33,24 @@ const CustomTooltip = ({ active, payload, label }) => {
   );
 };
 
+const CustomVolumeTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{
+      backgroundColor: 'var(--bg-elevated)',
+      border: '1px solid var(--border)',
+      borderRadius: 'var(--radius-sm)',
+      padding: '0.5rem 0.75rem',
+      boxShadow: 'var(--shadow-md)',
+    }}>
+      <p style={{ color: 'var(--text-tertiary)', fontSize: '0.6875rem', marginBottom: '0.125rem' }}>{label}</p>
+      <p style={{ color: '#3b82f6', fontSize: '0.9375rem', fontWeight: 600 }}>{payload[0].value} volume</p>
+    </div>
+  );
+};
+
 export default function Home({ session }) {
+  const toast = useToast();
   const [quote, setQuote] = useState('');
   const [weight, setWeight] = useState('');
   const [weightData, setWeightData] = useState([]);
@@ -60,6 +60,8 @@ export default function Home({ session }) {
   const [level, setLevel] = useState(1);
   const [xp, setXp] = useState(0);
   const [todayTemplate, setTodayTemplate] = useState(null);
+  const [isTodayCompleted, setIsTodayCompleted] = useState(false);
+  const [isTodayFrozen, setIsTodayFrozen] = useState(false);
   
   // Analytics State
   const [volumeData, setVolumeData] = useState([]);
@@ -69,7 +71,6 @@ export default function Home({ session }) {
   const [isFreezeModalOpen, setIsFreezeModalOpen] = useState(false);
   const [freezeReason, setFreezeReason] = useState('');
   const [isFreezing, setIsFreezing] = useState(false);
-  const [freezeDates, setFreezeDates] = useState(new Set());
 
   useEffect(() => {
     setQuote(quotes[Math.floor(Math.random() * quotes.length)]);
@@ -104,6 +105,7 @@ export default function Home({ session }) {
       .eq('user_id', session.user.id)
       .eq('day_of_week', todayName)
       .eq('completed', false)
+      .neq('routine_name', 'Spontaneous Workout')
       .order('created_at', { ascending: false })
       .limit(1);
       
@@ -163,7 +165,10 @@ export default function Home({ session }) {
         return d.getTime();
       }));
     }
-    setFreezeDates(fetchedFreezeDates);
+    
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    setIsTodayFrozen(fetchedFreezeDates.has(todayStart.getTime()));
 
     // Fetch all workouts to calculate stats
     const { data: allWorkouts } = await supabase
@@ -178,7 +183,7 @@ export default function Home({ session }) {
 
     if (allWorkouts && allWorkouts.length > 0) {
       // 1. Calculate Weekly Goal (count newest templates that are not rest days)
-      const templates = allWorkouts.filter(w => w.completed === false);
+      const templates = allWorkouts.filter(w => w.completed === false && w.routine_name !== 'Spontaneous Workout');
       templates.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); // newest first
 
       const templatesByDay = {};
@@ -209,41 +214,14 @@ export default function Home({ session }) {
       startOfWeek.setHours(0, 0, 0, 0);
 
       completedThisWeek = completedHistory.filter(w => new Date(w.completed_at) >= startOfWeek).length;
+      
+      const todayStartCheck = new Date();
+      todayStartCheck.setHours(0, 0, 0, 0);
+      setIsTodayCompleted(completedHistory.some(w => new Date(w.completed_at).getTime() >= todayStartCheck.getTime()));
 
       // 4. Calculate Streak
       if (completedHistory.length > 0) {
-        today.setHours(0, 0, 0, 0);
-        let currentCheckDate = new Date(today);
-        const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-        const completedDates = new Set(completedHistory.map(w => {
-          const d = new Date(w.completed_at);
-          d.setHours(0, 0, 0, 0);
-          return d.getTime();
-        }));
-
-        for (let i = 0; i < 365; i++) {
-          const time = currentCheckDate.getTime();
-          const isCompleted = completedDates.has(time);
-          const dayName = DAYS[currentCheckDate.getDay()];
-          const isRestDay = restDaysOfWeek.has(dayName);
-          const isFreezeDay = fetchedFreezeDates.has(time);
-          const isToday = i === 0;
-
-          if (isCompleted) {
-            streak++;
-          } else {
-            if (isToday) {
-              // skip today if not completed
-            } else if (isRestDay || isFreezeDay) {
-              // skip rest day or freeze day if not completed
-            } else {
-              // missing a required day breaks streak
-              break;
-            }
-          }
-          currentCheckDate.setDate(currentCheckDate.getDate() - 1);
-        }
+        streak = calculateStreak(completedHistory, restDaysOfWeek, fetchedFreezeDates);
         
         // 5. Calculate Volume Over Time
         const recentVolumes = [];
@@ -358,7 +336,14 @@ export default function Home({ session }) {
     if (!error) {
       setIsFreezeModalOpen(false);
       setFreezeReason('');
+      toast.success('Streak frozen successfully!');
       fetchData(); // Refresh to recalculate streak
+    } else {
+      if (error.code === '23505') {
+        toast.error('Streak already frozen for today!');
+      } else {
+        toast.error('Failed to freeze streak: ' + error.message);
+      }
     }
     setIsFreezing(false);
   };
@@ -396,12 +381,14 @@ export default function Home({ session }) {
           <div>
             <p className="stat-label">Current Streak</p>
             <p className="stat-value">{stats.currentStreak} Days</p>
-            <button 
-              onClick={() => setIsFreezeModalOpen(true)}
-              style={{ background: 'none', border: 'none', padding: 0, color: 'var(--text-tertiary)', fontSize: '0.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}
-            >
-              <Snowflake size={12} /> Freeze Streak
-            </button>
+            {!isTodayFrozen && (
+              <button 
+                onClick={() => setIsFreezeModalOpen(true)}
+                style={{ background: 'none', border: 'none', padding: 0, color: 'var(--text-tertiary)', fontSize: '0.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}
+              >
+                <Snowflake size={12} /> Freeze Streak
+              </button>
+            )}
           </div>
           <div className="stat-icon" style={{ backgroundColor: 'var(--accent-soft)' }}>
             <Flame size={22} style={{ color: 'var(--accent)' }} />
@@ -508,7 +495,7 @@ export default function Home({ session }) {
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                   <XAxis dataKey="date" stroke="var(--text-quaternary)" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                   <YAxis stroke="var(--text-quaternary)" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} width={40} />
-                  <Tooltip content={<CustomTooltip />} />
+                  <Tooltip content={<CustomVolumeTooltip />} />
                   <Area
                     type="monotone"
                     dataKey="volume"
@@ -523,7 +510,11 @@ export default function Home({ session }) {
             ) : (
               <div className="empty-state" style={{ padding: 'var(--space-8) var(--space-4)' }}>
                 <Activity size={32} className="empty-state-icon" />
-                <p className="empty-state-text">Complete workouts to see your volume graph!</p>
+                <p className="empty-state-text">
+                  {stats.totalWorkouts > 0 
+                    ? "No volume data found. Track reps and weight to see your graph!" 
+                    : "Complete workouts to see your volume graph!"}
+                </p>
               </div>
             )}
           </div>
@@ -590,7 +581,13 @@ export default function Home({ session }) {
           </div>
           
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-            {todayTemplate ? (
+            {isTodayCompleted ? (
+              <div className="empty-state" style={{ padding: 'var(--space-4) 0' }}>
+                <span style={{ fontSize: '2rem', marginBottom: 'var(--space-2)' }}>💪</span>
+                <p style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Already Completed!</p>
+                <p className="empty-state-text">You crushed your workout for today.</p>
+              </div>
+            ) : todayTemplate ? (
               todayTemplate.is_rest_day ? (
                 <div className="empty-state" style={{ padding: 'var(--space-4) 0' }}>
                   <span style={{ fontSize: '2rem', marginBottom: 'var(--space-2)' }}>☕</span>
@@ -621,15 +618,15 @@ export default function Home({ session }) {
                     <p style={{ fontSize: '0.875rem', color: 'var(--text-tertiary)' }}>No exercises added yet.</p>
                   )}
                   
-                  <a href="/workouts" className="btn btn-secondary btn-sm" style={{ marginTop: 'var(--space-4)', alignSelf: 'flex-start' }}>
+                  <Link to="/workouts" className="btn btn-secondary btn-sm" style={{ marginTop: 'var(--space-4)', alignSelf: 'flex-start' }}>
                     Start Workout
-                  </a>
+                  </Link>
                 </div>
               )
             ) : (
               <div className="empty-state" style={{ padding: 'var(--space-4) 0' }}>
                 <p className="empty-state-text">No template set for today.</p>
-                <a href="/templates" className="btn btn-secondary btn-sm mt-3">Set one up</a>
+                <Link to="/templates" className="btn btn-secondary btn-sm mt-3">Set one up</Link>
               </div>
             )}
           </div>

@@ -64,6 +64,7 @@ CREATE TABLE exercises (
   sets INTEGER DEFAULT 0,
   reps TEXT DEFAULT '0',
   weight NUMERIC DEFAULT 0,
+  minutes INTEGER DEFAULT 0,
   completed BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

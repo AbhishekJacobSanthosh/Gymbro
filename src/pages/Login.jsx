@@ -16,9 +16,15 @@ export default function Login() {
 
     try {
       if (isSignUp) {
-        const { error } = await supabase.auth.signUp({ email, password });
+        if (password.length < 6) {
+          throw new Error('Password must be at least 6 characters long.');
+        }
+        const { data, error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
-        setMessage('success:Check your email for the login link!');
+        
+        if (!data?.session) {
+          setMessage('success:Check your email for the login link!');
+        }
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
@@ -127,6 +133,7 @@ export default function Login() {
                 placeholder="••••••••"
                 value={password}
                 required
+                minLength={6}
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>

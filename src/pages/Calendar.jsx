@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, CheckCircle, Flame, User, Loader2, X, Check } from 'lucide-react';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Flame, Loader2, X, Check } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../App';
+import { calculateStreak } from '../lib/utils';
 
 export default function Calendar({ session }) {
   const toast = useToast();
@@ -77,6 +78,11 @@ export default function Calendar({ session }) {
         .eq('completed', true)
         .order('completed_at', { ascending: false });
 
+      // Fetch streak freezes
+      const { data: freezesData } = await supabase
+        .from('streak_freezes')
+        .select('user_id, freeze_date');
+
       const profileIds = profileList.map(p => p.id);
 
       // Fetch active templates to determine rest days
@@ -128,47 +134,18 @@ export default function Calendar({ session }) {
         });
       }
 
-      const calculateStreak = (history, restDaysOfWeek) => {
-        if (!history || history.length === 0) return 0;
-        let streak = 0;
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        let currentCheckDate = new Date(today);
-        const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-        const completedDates = new Set(history.map(w => {
-          const d = new Date(w.completed_at);
-          d.setHours(0, 0, 0, 0);
-          return d.getTime();
-        }));
-
-        for (let i = 0; i < 365; i++) {
-          const time = currentCheckDate.getTime();
-          const isCompleted = completedDates.has(time);
-          const dayName = DAYS[currentCheckDate.getDay()];
-          const isRestDay = restDaysOfWeek.has(dayName);
-          const isToday = i === 0;
-
-          if (isCompleted) {
-            streak++;
-          } else {
-            if (isToday) {
-              // skip today if not completed
-            } else if (isRestDay) {
-              // skip rest day if not completed
-            } else {
-              // missing a required day breaks streak
-              break;
-            }
-          }
-          currentCheckDate.setDate(currentCheckDate.getDate() - 1);
-        }
-        return streak;
-      };
-
       if (allWorkouts) {
         profileList.forEach(p => {
-          p.streak = calculateStreak(allWorkouts.filter(w => w.user_id === p.id), userRestDays[p.id]);
+          const userFreezes = new Set(
+            (freezesData || [])
+              .filter(f => f.user_id === p.id)
+              .map(f => {
+                const d = new Date(f.freeze_date);
+                d.setHours(0, 0, 0, 0);
+                return d.getTime();
+              })
+          );
+          p.streak = calculateStreak(allWorkouts.filter(w => w.user_id === p.id), userRestDays[p.id], userFreezes);
           p.total = userTotals[p.id] || 0;
         });
       }
@@ -252,8 +229,12 @@ export default function Calendar({ session }) {
     if (!activeTemplate) return;
     setSaving(true);
 
-    // Save updated exercises (reps and weights for progressive overload) and reset completed status
-    for (const ex of dayExercises) {
+    // Build the completed_at ISO string using the selected date but keeping a default noon time
+    const localDate = new Date(selectedDate);
+    localDate.setHours(12, 0, 0, 0);
+
+    // Save updated exercises (reps and weights for progressive overload) back to the template
+    await Promise.all(dayExercises.map(async (ex) => {
       await supabase
         .from('exercises')
         .update({
@@ -262,17 +243,34 @@ export default function Calendar({ session }) {
           completed: false
         })
         .eq('id', ex.id);
-    }
+    }));
 
-    // Build the completed_at ISO string using the selected date but keeping a default noon time to avoid timezone edge cases
-    const localDate = new Date(selectedDate);
-    localDate.setHours(12, 0, 0, 0);
-
-    // Mark as completed
-    await supabase
+    // Insert historical workout record
+    const { data: newWorkout, error: wError } = await supabase
       .from('workouts')
-      .update({ completed: true, completed_at: localDate.toISOString() })
-      .eq('id', activeTemplate.id);
+      .insert([{
+        user_id: session.user.id,
+        routine_name: activeTemplate.routine_name,
+        day_of_week: activeTemplate.day_of_week,
+        is_rest_day: activeTemplate.is_rest_day,
+        completed: true,
+        completed_at: localDate.toISOString()
+      }])
+      .select()
+      .single();
+
+    if (!wError && newWorkout && dayExercises.length > 0) {
+      const completedExercises = dayExercises.map(ex => ({
+        workout_id: newWorkout.id,
+        name: ex.name,
+        sets: parseInt(ex.sets) || 0,
+        reps: ex.reps || '0',
+        weight: parseFloat(ex.weight) || 0,
+        minutes: parseInt(ex.minutes) || 0,
+        completed: ex.completed
+      }));
+      await supabase.from('exercises').insert(completedExercises);
+    }
 
     // Refresh Calendar
     await fetchCalendarData();
@@ -335,8 +333,6 @@ export default function Calendar({ session }) {
 
                 {days.map(day => {
                   const dayData = activityData[day] || [];
-                  const youCompleted = dayData.includes('you');
-                  const sisterCompleted = dayData.includes('sister');
                   const hasActivity = dayData.length > 0;
 
                   const isToday = day === todayDate.getDate() &&

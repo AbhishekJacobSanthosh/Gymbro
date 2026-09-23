@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Check, Dumbbell, Coffee, Loader2, Trophy } from 'lucide-react';
+import { Check, Dumbbell, Coffee, Loader2, Trophy, Undo2, Plus } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../App';
+import { calculateXpGained, calculateLevelFromXp } from '../lib/utils';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -62,6 +63,8 @@ export default function Workouts({ session }) {
   // Add Exercise State
   const [newExercise, setNewExercise] = useState({ name: '', sets: '', reps: '', weight: '', minutes: '' });
   const [addingExercise, setAddingExercise] = useState(false);
+  const [isTodayCompleted, setIsTodayCompleted] = useState(false);
+  const [completedWorkoutId, setCompletedWorkoutId] = useState(null);
 
   useEffect(() => {
     fetchTodayWorkout();
@@ -70,6 +73,44 @@ export default function Workouts({ session }) {
   const fetchTodayWorkout = async () => {
     setLoading(true);
 
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(todayStart);
+    todayEnd.setDate(todayEnd.getDate() + 1);
+
+    // Check if a workout was already completed today
+    const { data: completedWorkouts } = await supabase
+      .from('workouts')
+      .select('id')
+      .eq('user_id', session.user.id)
+      .eq('completed', true)
+      .gte('completed_at', todayStart.toISOString())
+      .lt('completed_at', todayEnd.toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (completedWorkouts && completedWorkouts.length > 0) {
+      setCompletedWorkoutId(completedWorkouts[0].id);
+      setIsTodayCompleted(true);
+      setLoading(false);
+      return;
+    }
+
+    // Clean up abandoned Spontaneous Workouts from previous days so they don't override future templates
+    const { data: abandoned } = await supabase
+      .from('workouts')
+      .select('id')
+      .eq('user_id', session.user.id)
+      .eq('completed', false)
+      .eq('routine_name', 'Spontaneous Workout')
+      .lt('created_at', todayStart.toISOString());
+    
+    if (abandoned && abandoned.length > 0) {
+      const abandonedIds = abandoned.map(a => a.id);
+      await supabase.from('exercises').delete().in('workout_id', abandonedIds);
+      await supabase.from('workouts').delete().in('id', abandonedIds);
+    }
+
     // Find the template (completed = false) for TODAY
     let { data: templates } = await supabase
       .from('workouts')
@@ -77,6 +118,7 @@ export default function Workouts({ session }) {
       .eq('user_id', session.user.id)
       .eq('day_of_week', today)
       .eq('completed', false)
+      .neq('routine_name', 'Spontaneous Workout')
       .order('created_at', { ascending: false })
       .limit(1);
 
@@ -126,6 +168,59 @@ export default function Workouts({ session }) {
       toast?.error("Error starting workout.");
     }
     setLoading(false);
+  };
+
+  const handleStartSecondWorkout = async () => {
+    setIsTodayCompleted(false);
+    await handleStartSpontaneous();
+  };
+
+  const handleUndo = async () => {
+    if (!completedWorkoutId) return;
+    setLoading(true);
+
+    try {
+      // 1. Fetch exercises to calculate XP to subtract
+      const { data: pastExercises } = await supabase
+        .from('exercises')
+        .select('weight, reps, sets')
+        .eq('workout_id', completedWorkoutId);
+
+      let totalVolume = 0;
+      if (pastExercises) {
+        pastExercises.forEach(ex => {
+          totalVolume += (ex.sets * (parseInt(ex.reps) || 0) * ex.weight);
+        });
+      }
+      const xpToSubtract = calculateXpGained(totalVolume);
+
+      // 2. Subtract XP
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('xp, level')
+        .eq('id', session.user.id)
+        .single();
+
+      if (profile) {
+        const newXp = Math.max(0, profile.xp - xpToSubtract);
+        const newLevel = calculateLevelFromXp(newXp);
+        await supabase.from('profiles').update({ xp: newXp, level: newLevel }).eq('id', session.user.id);
+      }
+
+      // 3. Delete historical records
+      await supabase.from('exercises').delete().eq('workout_id', completedWorkoutId);
+      await supabase.from('workouts').delete().eq('id', completedWorkoutId);
+
+      // 4. Reset state and reload template
+      setIsTodayCompleted(false);
+      setCompletedWorkoutId(null);
+      toast?.success("Workout undone. You can now edit your exercises.");
+      await fetchTodayWorkout();
+    } catch (error) {
+      console.error(error);
+      toast?.error("Failed to undo workout.");
+      setLoading(false);
+    }
   };
 
   const handleAddExercise = async (e) => {
@@ -237,7 +332,7 @@ export default function Workouts({ session }) {
       totalVolume += (sets * reps * weight);
     });
     
-    const xpGained = 50 + Math.floor(totalVolume / 100);
+    const xpGained = calculateXpGained(totalVolume);
 
     const { data: profile } = await supabase
       .from('profiles')
@@ -247,14 +342,15 @@ export default function Workouts({ session }) {
       
     const currentXp = profile?.xp || 0;
     const newXp = currentXp + xpGained;
-    const newLevel = Math.floor(Math.sqrt(newXp / 100)) + 1; 
+    const newLevel = calculateLevelFromXp(newXp);
 
     await supabase.from('profiles').update({ xp: newXp, level: newLevel }).eq('id', session.user.id);
 
     // --- GAMIFICATION: PR CHECK ---
     let prsHit = [];
-    for (const ex of exercises) {
-      if (!ex.name || !ex.weight || ex.weight <= 0) continue;
+    
+    await Promise.all(exercises.map(async (ex) => {
+      if (!ex.name || !ex.weight || ex.weight <= 0) return;
       
       const { data: pastEx } = await supabase
         .from('exercises')
@@ -270,10 +366,11 @@ export default function Workouts({ session }) {
       if (parseFloat(ex.weight) > pastMax && pastMax > 0) {
         prsHit.push({ name: ex.name, weight: ex.weight });
       }
-    }
+    }));
 
     // Add to Activity Feed
-    let feedAction = `crushed their ${routineName} workout! (+${xpGained} XP)`;
+    const cleanRoutineName = routineName.toLowerCase().includes('workout') ? routineName : `${routineName} workout`;
+    let feedAction = `crushed their ${cleanRoutineName}! (+${xpGained} XP)`;
     if (prsHit.length > 0) {
       const prText = prsHit.map(pr => `${pr.name} (${pr.weight}kg)`).join(', ');
       feedAction = `hit a PR on ${prText}! (+${xpGained} XP)`;
@@ -294,17 +391,20 @@ export default function Workouts({ session }) {
       setExercises([]);
       setRoutineName('No Template');
     } else {
-      for (const ex of exercises) {
+      await Promise.all(exercises.map(async (ex) => {
         if (ex.completed) {
           await supabase.from('exercises').update({ completed: false }).eq('id', ex.id);
         }
-      }
+      }));
       setExercises(exercises.map(ex => ({ ...ex, completed: false })));
     }
     
     setFinishing(false);
 
     toast?.success(`🎉 ${routineName} workout logged! Great work!`);
+    
+    // Refresh the page state to show the "Already Completed" screen
+    fetchTodayWorkout();
   };
 
   const completedCount = exercises.filter(ex => ex.completed).length;
@@ -336,6 +436,23 @@ export default function Workouts({ session }) {
         {loading ? (
           <div className="empty-state">
             <Loader2 size={28} className="animate-spin" style={{ color: 'var(--text-tertiary)' }} />
+          </div>
+        ) : isTodayCompleted ? (
+          <div className="empty-state" style={{ padding: 'var(--space-12) var(--space-4)' }}>
+            <span style={{ fontSize: '3rem', marginBottom: 'var(--space-4)' }}>💪</span>
+            <h3 style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 'var(--space-2)' }}>Already Completed!</h3>
+            <p className="empty-state-text" style={{ maxWidth: '320px', margin: '0 auto' }}>
+              You've already crushed your workout for today. Rest up and come back stronger tomorrow!
+            </p>
+            
+            <div className="flex gap-4 justify-center" style={{ marginTop: 'var(--space-8)', flexWrap: 'wrap' }}>
+              <button onClick={handleUndo} className="btn btn-secondary">
+                <Undo2 size={18} /> Undo Last Workout
+              </button>
+              <button onClick={handleStartSecondWorkout} className="btn btn-primary">
+                <Plus size={18} /> Start Another
+              </button>
+            </div>
           </div>
         ) : (
           <>
