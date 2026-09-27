@@ -1,27 +1,39 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { User, Save, LogOut, Loader2, Mail } from 'lucide-react';
+import { User, Save, LogOut, Loader2, Mail, Medal, Award } from 'lucide-react';
 import { useToast } from '../App';
+
+let hasLoadedOnce = false;
 
 export default function Profile({ session }) {
   const toast = useToast();
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!hasLoadedOnce);
   const [saving, setSaving] = useState(false);
   const [displayName, setDisplayName] = useState('');
   const [level, setLevel] = useState(1);
   const [xp, setXp] = useState(0);
+  const [color, setColor] = useState('#ff7854');
+  const [achievements, setAchievements] = useState([]);
+  
+  const COLORS = ['#ff7854', '#4ade80', '#60a5fa', '#c084fc', '#facc15', '#f472b6', '#ef4444', '#14b8a6'];
 
   useEffect(() => {
     let ignore = false;
     async function getProfile() {
-      setLoading(true);
+      if (!hasLoadedOnce) setLoading(true);
       const { user } = session;
 
       const { data, error } = await supabase
         .from('profiles')
-        .select(`display_name, xp, level`)
+        .select(`display_name, xp, level, color`)
         .eq('id', user.id)
         .single();
+
+      const { data: achData } = await supabase
+        .from('achievements')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('achieved_at', { ascending: false });
 
       if (!ignore) {
         if (error) {
@@ -30,8 +42,13 @@ export default function Profile({ session }) {
           setDisplayName(data.display_name || '');
           setXp(data.xp || 0);
           setLevel(data.level || 1);
+          if (data.color) setColor(data.color);
+        }
+        if (achData) {
+          setAchievements(achData);
         }
       }
+      hasLoadedOnce = true;
       setLoading(false);
     }
 
@@ -49,6 +66,7 @@ export default function Profile({ session }) {
       const updates = {
         id: user.id,
         display_name: displayName,
+        color: color,
         updated_at: new Date(),
       };
 
@@ -143,6 +161,31 @@ export default function Profile({ session }) {
             <p className="form-hint">This is how others will see you on the calendar and activity feed.</p>
           </div>
 
+          <div className="form-group">
+            <label className="form-label">Profile Color</label>
+            <div className="flex gap-2 flex-wrap">
+              {COLORS.map(c => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setColor(c)}
+                  style={{
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '50%',
+                    backgroundColor: c,
+                    border: color === c ? '2px solid white' : '2px solid transparent',
+                    outline: color === c ? `2px solid ${c}` : 'none',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    padding: 0
+                  }}
+                />
+              ))}
+            </div>
+            <p className="form-hint" style={{ marginTop: 'var(--space-2)' }}>This color represents you on the consistency calendar.</p>
+          </div>
+
           <button
             className="btn btn-primary"
             type="submit"
@@ -162,6 +205,53 @@ export default function Profile({ session }) {
             )}
           </button>
         </form>
+      </div>
+
+      {/* Achievements Section */}
+      <div className="card" style={{ maxWidth: '480px' }}>
+        <div className="flex items-center gap-3 mb-5">
+          <div className="stat-icon" style={{ backgroundColor: 'var(--warning-soft)', width: '36px', height: '36px' }}>
+            <Award size={18} style={{ color: 'var(--warning)' }} />
+          </div>
+          <h2 style={{ fontSize: '1.0625rem', fontWeight: 600 }}>Achievements</h2>
+        </div>
+
+        {loading ? (
+          <div className="flex justify-center" style={{ padding: 'var(--space-4) 0' }}>
+            <Loader2 size={24} className="animate-spin" style={{ color: 'var(--text-tertiary)' }} />
+          </div>
+        ) : achievements.length === 0 ? (
+          <div className="empty-state" style={{ padding: 'var(--space-4) 0' }}>
+            <Medal size={28} className="empty-state-icon" />
+            <p className="empty-state-text">No achievements yet. Keep grinding!</p>
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-4)' }}>
+            {achievements.map((ach) => (
+              <div key={ach.id} style={{ 
+                padding: 'var(--space-3)', 
+                backgroundColor: 'var(--bg-elevated)', 
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--border)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--space-3)'
+              }}>
+                <div style={{ 
+                  backgroundColor: 'var(--warning-soft)', 
+                  width: '40px', height: '40px', borderRadius: '50%',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }}>
+                  <Medal size={20} style={{ color: 'var(--warning)' }} />
+                </div>
+                <div>
+                  <p style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--text-primary)' }}>{ach.badge_name}</p>
+                  {ach.description && <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{ach.description}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Sign Out Section — visible on mobile where it's hidden from nav */}

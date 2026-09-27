@@ -23,6 +23,7 @@ CREATE TABLE profiles (
   display_name TEXT UNIQUE,
   xp INTEGER DEFAULT 0,
   level INTEGER DEFAULT 1,
+  color TEXT,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -66,6 +67,7 @@ CREATE TABLE exercises (
   weight NUMERIC DEFAULT 0,
   minutes INTEGER DEFAULT 0,
   completed BOOLEAN DEFAULT FALSE,
+  logged_sets JSONB DEFAULT '[]'::jsonb,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 

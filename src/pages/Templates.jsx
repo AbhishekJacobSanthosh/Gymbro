@@ -5,10 +5,12 @@ import { supabase } from '../lib/supabase';
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const SHORT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+let hasLoadedOnce = false;
+
 export default function Templates({ session }) {
   const [activeDay, setActiveDay] = useState(DAYS[new Date().getDay()]);
   const [exercises, setExercises] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!hasLoadedOnce);
 
   // Template State
   const [templateId, setTemplateId] = useState(null);
@@ -21,9 +23,11 @@ export default function Templates({ session }) {
 
   // Weekly Overview State
   const [weeklyOverview, setWeeklyOverview] = useState({});
+  const [pastExercises, setPastExercises] = useState([]);
 
   useEffect(() => {
     fetchWeeklyOverview();
+    fetchPastExercises();
   }, [session]);
 
   useEffect(() => {
@@ -51,8 +55,16 @@ export default function Templates({ session }) {
     }
   };
 
+  const fetchPastExercises = async () => {
+    if (!session?.user) return;
+    const { data } = await supabase.from('exercises').select('name').neq('name', '');
+    if (data) {
+      setPastExercises([...new Set(data.map(d => d.name))]);
+    }
+  };
+
   const fetchTemplateForDay = async (day) => {
-    setLoading(true);
+    if (!hasLoadedOnce) setLoading(true);
     setIsEditingName(false);
 
     // Find the template (completed = false) for this day
@@ -104,6 +116,7 @@ export default function Templates({ session }) {
     }
 
     setTemplateId(currentTId);
+    hasLoadedOnce = true;
     setLoading(false);
   };
 
@@ -299,6 +312,7 @@ export default function Templates({ session }) {
                             <span style={{ flex: 1, textAlign: 'center' }}>Sets</span>
                             <span style={{ flex: 1, textAlign: 'center' }}>Reps</span>
                             <span style={{ flex: 1, textAlign: 'center' }}>Weight</span>
+                            <span style={{ flex: 1, textAlign: 'center' }}>Mins</span>
                             <span style={{ width: '36px' }}></span>
                           </div>
 
@@ -309,6 +323,7 @@ export default function Templates({ session }) {
                             <div key={ex.id} className="exercise-grid-row">
                               <input
                                 type="text"
+                                list="exercise-suggestions"
                                 value={ex.name}
                                 onChange={e => handleLocalChange(ex.id, 'name', e.target.value)}
                                 onBlur={e => handleBlurSave(ex.id, 'name', e.target.value)}
@@ -363,10 +378,14 @@ export default function Templates({ session }) {
                     {/* Add Exercise Form */}
                     <div style={{ borderTop: '1px solid var(--divider)', paddingTop: 'var(--space-6)' }}>
                       <p className="text-label mb-3">Quick Add</p>
+                      <datalist id="exercise-suggestions">
+                        {pastExercises.map(name => <option key={name} value={name} />)}
+                      </datalist>
                       <form onSubmit={handleAddExercise} className="flex gap-2 flex-wrap items-end">
                         <div style={{ flex: '1 1 150px' }}>
                           <input
                             type="text"
+                            list="exercise-suggestions"
                             placeholder="Exercise Name"
                             value={newExercise.name}
                             onChange={e => setNewExercise({ ...newExercise, name: e.target.value })}

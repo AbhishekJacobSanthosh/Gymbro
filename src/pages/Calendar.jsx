@@ -4,10 +4,12 @@ import { supabase } from '../lib/supabase';
 import { useToast } from '../App';
 import { calculateStreak } from '../lib/utils';
 
+let hasLoadedOnce = false;
+
 export default function Calendar({ session }) {
   const toast = useToast();
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!hasLoadedOnce);
 
   // Navigation
   const prevMonth = () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
@@ -29,6 +31,7 @@ export default function Calendar({ session }) {
   const [selectedDate, setSelectedDate] = useState(null);
   const [dayExercises, setDayExercises] = useState([]);
   const [activeTemplate, setActiveTemplate] = useState(null);
+  const [historicalWorkouts, setHistoricalWorkouts] = useState([]);
   const [modalLoading, setModalLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -38,7 +41,7 @@ export default function Calendar({ session }) {
 
   const fetchCalendarData = async () => {
     if (!session?.user) return;
-    setLoading(true);
+    if (!hasLoadedOnce) setLoading(true);
 
     try {
       // 1. Fetch all profiles
@@ -49,7 +52,7 @@ export default function Calendar({ session }) {
         profileList = allProfiles.map((p, index) => ({
           id: p.id,
           name: p.display_name || (p.id === session.user.id ? 'You' : `User ${index + 1}`),
-          color: COLORS[index % COLORS.length],
+          color: p.color || COLORS[index % COLORS.length],
           level: p.level || 1,
           xp: p.xp || 0,
           streak: 0,
@@ -163,6 +166,7 @@ export default function Calendar({ session }) {
       console.error(error);
     }
 
+    hasLoadedOnce = true;
     setLoading(false);
   };
 
@@ -179,6 +183,27 @@ export default function Calendar({ session }) {
     setSelectedDate(clickedDate);
     setModalOpen(true);
     setModalLoading(true);
+    setHistoricalWorkouts([]);
+
+    const startOfDay = new Date(clickedDate);
+    const endOfDay = new Date(clickedDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    // 1. Check if user already completed workouts on this day
+    const { data: pastWorkouts } = await supabase
+      .from('workouts')
+      .select('*, exercises(*)')
+      .eq('user_id', session.user.id)
+      .eq('completed', true)
+      .gte('completed_at', startOfDay.toISOString())
+      .lte('completed_at', endOfDay.toISOString())
+      .order('completed_at', { ascending: false });
+
+    if (pastWorkouts && pastWorkouts.length > 0) {
+      setHistoricalWorkouts(pastWorkouts);
+      setModalLoading(false);
+      return;
+    }
 
     const dayOfWeekStr = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][clickedDate.getDay()];
 
@@ -427,12 +452,59 @@ export default function Calendar({ session }) {
               <X size={20} />
             </button>
 
-            <h2 className="modal-title">Log Workout</h2>
+            <h2 className="modal-title">{historicalWorkouts.length > 0 ? 'Workout History' : 'Log Workout'}</h2>
             <p className="modal-subtitle">{selectedDate?.toDateString()}</p>
 
             {modalLoading ? (
               <div className="empty-state">
                 <Loader2 size={28} className="animate-spin" style={{ color: 'var(--text-tertiary)' }} />
+              </div>
+            ) : historicalWorkouts.length > 0 ? (
+              <div className="flex-col gap-4" style={{ display: 'flex' }}>
+                {historicalWorkouts.map(w => (
+                  <div key={w.id} className="card" style={{ padding: 'var(--space-4)' }}>
+                    <div className="flex justify-between items-center mb-3">
+                      <h3 style={{ fontSize: '1.0625rem', fontWeight: 600 }}>{w.routine_name}</h3>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                        {new Date(w.completed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    {w.is_rest_day ? (
+                      <p style={{ color: 'var(--text-secondary)' }}>Rest Day</p>
+                    ) : (
+                      <div className="flex-col gap-2" style={{ display: 'flex' }}>
+                        {(w.exercises || []).map(ex => {
+                          const hasLoggedSets = ex.logged_sets && Object.keys(ex.logged_sets).length > 0;
+                          return (
+                            <div key={ex.id} style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.875rem', marginBottom: '8px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                <span style={{ fontWeight: 500 }}>{ex.name}</span>
+                                {!hasLoggedSets && (
+                                  <span style={{ color: 'var(--text-secondary)' }}>
+                                    {ex.sets > 0 && `${ex.sets} Sets `} 
+                                    {ex.reps && ex.reps !== '0' && `${ex.reps} Reps `}
+                                    {ex.weight > 0 && `${ex.weight}kg `}
+                                    {ex.minutes > 0 && `${ex.minutes}m`}
+                                  </span>
+                                )}
+                              </div>
+                              {hasLoggedSets && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', paddingLeft: '8px', borderLeft: '2px solid var(--border)', marginTop: '2px' }}>
+                                  {Object.entries(ex.logged_sets).map(([idx, set]) => (
+                                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                                      <span>Set {parseInt(idx) + 1}</span>
+                                      <span>{set.reps} Reps • {set.weight}kg</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             ) : !activeTemplate ? (
               <div className="empty-state">

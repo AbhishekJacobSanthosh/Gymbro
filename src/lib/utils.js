@@ -83,3 +83,17 @@ export function calculateStreak(completedHistory, restDaysOfWeek, freezeDatesSet
   
   return streak;
 }
+
+// Achievements Logic
+export const AVAILABLE_ACHIEVEMENTS = [
+  { id: 'first_workout', badge_name: 'First Steps', description: 'Complete your first workout.', condition: (stats) => stats.totalWorkouts >= 1 },
+  { id: 'streak_3', badge_name: 'Consistency is Key', description: 'Hit a 3-day streak.', condition: (stats) => stats.currentStreak >= 3 },
+  { id: 'streak_7', badge_name: 'Unstoppable', description: 'Hit a 7-day streak.', condition: (stats) => stats.currentStreak >= 7 },
+  { id: 'level_5', badge_name: 'Rising Star', description: 'Reach Level 5.', condition: (stats) => stats.level >= 5 },
+  { id: 'volume_10k', badge_name: 'Heavy Lifter', description: 'Move 10,000kg total volume in a single workout.', condition: (stats) => stats.maxVolume >= 10000 },
+];
+
+export function getEarnedAchievements(stats, existingAchievements = []) {
+  const existingIds = new Set(existingAchievements.map(a => a.badge_name));
+  return AVAILABLE_ACHIEVEMENTS.filter(ach => !existingIds.has(ach.badge_name) && ach.condition(stats));
+}

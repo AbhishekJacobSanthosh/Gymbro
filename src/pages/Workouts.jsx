@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Check, Dumbbell, Coffee, Loader2, Trophy, Undo2, Plus } from 'lucide-react';
+import { Check, Dumbbell, Coffee, Loader2, Trophy, Undo2, Plus, Play, Square, TimerReset, ChevronDown, ChevronUp } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../App';
-import { calculateXpGained, calculateLevelFromXp } from '../lib/utils';
+import { calculateXpGained, calculateLevelFromXp, calculateStreak, getEarnedAchievements } from '../lib/utils';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -46,11 +46,14 @@ function ProgressRing({ completed, total, size = 100, strokeWidth = 6 }) {
   );
 }
 
+let hasLoadedOnce = false;
+
 export default function Workouts({ session }) {
   const toast = useToast();
   const [today] = useState(DAYS[new Date().getDay()]);
   const [exercises, setExercises] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [pastExercises, setPastExercises] = useState([]);
+  const [loading, setLoading] = useState(!hasLoadedOnce);
   const [finishing, setFinishing] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
   const [prMessages, setPrMessages] = useState([]);
@@ -66,12 +69,41 @@ export default function Workouts({ session }) {
   const [isTodayCompleted, setIsTodayCompleted] = useState(false);
   const [completedWorkoutId, setCompletedWorkoutId] = useState(null);
 
+  // Timer State
+  const [timerSeconds, setTimerSeconds] = useState(0);
+  const [isTimerRunning, setIsTimerRunning] = useState(false);
+
+  useEffect(() => {
+    let interval;
+    if (isTimerRunning) {
+      interval = setInterval(() => {
+        setTimerSeconds(s => s + 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [isTimerRunning]);
+
+  const formatTime = (totalSeconds) => {
+    const m = Math.floor(totalSeconds / 60);
+    const s = totalSeconds % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
   useEffect(() => {
     fetchTodayWorkout();
+    fetchPastExercises();
   }, [session]);
 
+  const fetchPastExercises = async () => {
+    if (!session?.user) return;
+    const { data } = await supabase.from('exercises').select('name').neq('name', '');
+    if (data) {
+      setPastExercises([...new Set(data.map(d => d.name))]);
+    }
+  };
+
   const fetchTodayWorkout = async () => {
-    setLoading(true);
+    if (!hasLoadedOnce) setLoading(true);
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
@@ -139,9 +171,19 @@ export default function Workouts({ session }) {
         .eq('workout_id', templates[0].id)
         .order('created_at', { ascending: true });
 
-      setExercises(exData || []);
+      const formattedExData = (exData || []).map(ex => {
+        const drafts = {};
+        const setsCount = parseInt(ex.sets) || 0;
+        for (let i = 0; i < setsCount; i++) {
+          drafts[i] = ex.logged_sets?.[i] || { reps: ex.reps, weight: ex.weight };
+        }
+        return { ...ex, set_drafts: drafts };
+      });
+
+      setExercises(formattedExData);
     }
 
+    hasLoadedOnce = true;
     setLoading(false);
   };
 
@@ -246,7 +288,12 @@ export default function Workouts({ session }) {
       .single();
 
     if (!error && inserted) {
-      setExercises([...exercises, inserted]);
+      const drafts = {};
+      const setsCount = parseInt(inserted.sets) || 0;
+      for (let i = 0; i < setsCount; i++) {
+        drafts[i] = { reps: inserted.reps, weight: inserted.weight };
+      }
+      setExercises([...exercises, { ...inserted, set_drafts: drafts }]);
       setNewExercise({ name: '', sets: '', reps: '', weight: '', minutes: '' });
     } else {
       toast?.error("Error adding exercise.");
@@ -266,6 +313,49 @@ export default function Workouts({ session }) {
         ex.id === id ? { ...ex, completed: !currentStatus } : ex
       ));
     }
+  };
+
+  const toggleSet = (exId, setIndex) => {
+    setExercises(exercises.map(ex => {
+      if (ex.id === exId) {
+        const loggedSets = ex.logged_sets || {};
+        const isCompleted = !!loggedSets[setIndex];
+        
+        let newLoggedSets = { ...loggedSets };
+        if (isCompleted) {
+          delete newLoggedSets[setIndex];
+        } else {
+          newLoggedSets[setIndex] = { ...(ex.set_drafts?.[setIndex] || { reps: ex.reps, weight: ex.weight }) };
+        }
+        
+        // Auto-complete the exercise if all sets are done
+        const completedCount = Object.keys(newLoggedSets).length;
+        let newCompletedStatus = ex.completed;
+        if (!isCompleted && completedCount === (parseInt(ex.sets) || 0)) {
+           newCompletedStatus = true;
+           supabase.from('exercises').update({ completed: true, logged_sets: newLoggedSets }).eq('id', exId);
+        } else {
+           if (isCompleted && ex.completed) {
+             newCompletedStatus = false;
+           }
+           supabase.from('exercises').update({ completed: newCompletedStatus, logged_sets: newLoggedSets }).eq('id', exId);
+        }
+        
+        return { ...ex, logged_sets: newLoggedSets, completed: newCompletedStatus };
+      }
+      return ex;
+    }));
+  };
+
+  const handleSetDraftChange = (exId, setIndex, field, value) => {
+    setExercises(exercises.map(ex => {
+      if (ex.id === exId) {
+         const newDrafts = { ...(ex.set_drafts || {}) };
+         newDrafts[setIndex] = { ...newDrafts[setIndex], [field]: value };
+         return { ...ex, set_drafts: newDrafts };
+      }
+      return ex;
+    }));
   };
 
   const handleLocalChange = (id, field, value) => {
@@ -310,6 +400,7 @@ export default function Workouts({ session }) {
         reps: ex.reps || '0',
         weight: parseFloat(ex.weight) || 0,
         minutes: parseInt(ex.minutes) || 0,
+        logged_sets: ex.logged_sets || null,
         completed: true
       }));
       await supabase.from('exercises').insert(completedExercises);
@@ -318,18 +409,30 @@ export default function Workouts({ session }) {
     // --- GAMIFICATION: XP & LEVELING ---
     let totalVolume = 0;
     exercises.forEach(ex => {
-      // Reps might be a string like "10, 10, 8", we can just try to parse the first number or average. 
-      // For simplicity, let's assume it's a single number or we take the first number.
-      let reps = 0;
-      if (typeof ex.reps === 'string') {
-        const match = ex.reps.match(/\d+/);
-        if (match) reps = parseInt(match[0]);
+      if (ex.logged_sets && Object.keys(ex.logged_sets).length > 0) {
+        Object.values(ex.logged_sets).forEach(set => {
+          let reps = 0;
+          if (typeof set.reps === 'string') {
+            const match = set.reps.match(/\d+/);
+            if (match) reps = parseInt(match[0]);
+          } else {
+            reps = parseInt(set.reps) || 0;
+          }
+          const weight = parseFloat(set.weight) || 0;
+          totalVolume += (reps * weight);
+        });
       } else {
-        reps = parseInt(ex.reps) || 0;
+        let reps = 0;
+        if (typeof ex.reps === 'string') {
+          const match = ex.reps.match(/\d+/);
+          if (match) reps = parseInt(match[0]);
+        } else {
+          reps = parseInt(ex.reps) || 0;
+        }
+        const weight = parseFloat(ex.weight) || 0;
+        const sets = parseInt(ex.sets) || 0;
+        totalVolume += (sets * reps * weight);
       }
-      const weight = parseFloat(ex.weight) || 0;
-      const sets = parseInt(ex.sets) || 0;
-      totalVolume += (sets * reps * weight);
     });
     
     const xpGained = calculateXpGained(totalVolume);
@@ -368,6 +471,37 @@ export default function Workouts({ session }) {
       }
     }));
 
+    // --- GAMIFICATION: ACHIEVEMENTS CHECK ---
+    const { data: allWorkouts } = await supabase.from('workouts').select('completed, completed_at').eq('user_id', session.user.id).eq('completed', true);
+    
+    // We haven't fetched rest days or freezes here, but for simple achievements, we can just use total workouts.
+    // To be precise on streak, we can just pass an empty set for freezes and rest days.
+    const streak = calculateStreak(allWorkouts || [], new Set(), new Set());
+    
+    const stats = {
+      totalWorkouts: (allWorkouts?.length || 0),
+      currentStreak: streak,
+      level: newLevel,
+      maxVolume: totalVolume
+    };
+
+    const { data: existingAchievements } = await supabase.from('achievements').select('badge_name').eq('user_id', session.user.id);
+    const earnedAchievements = getEarnedAchievements(stats, existingAchievements || []);
+
+    if (earnedAchievements.length > 0) {
+      await supabase.from('achievements').insert(
+        earnedAchievements.map(ach => ({
+          user_id: session.user.id,
+          badge_name: ach.badge_name,
+          description: ach.description
+        }))
+      );
+      
+      earnedAchievements.forEach(ach => {
+         setTimeout(() => toast?.success(`🏅 Achievement Unlocked: ${ach.badge_name}!`), 1000);
+      });
+    }
+
     // Add to Activity Feed
     const cleanRoutineName = routineName.toLowerCase().includes('workout') ? routineName : `${routineName} workout`;
     let feedAction = `crushed their ${cleanRoutineName}! (+${xpGained} XP)`;
@@ -375,6 +509,10 @@ export default function Workouts({ session }) {
       const prText = prsHit.map(pr => `${pr.name} (${pr.weight}kg)`).join(', ');
       feedAction = `hit a PR on ${prText}! (+${xpGained} XP)`;
       setPrMessages(prsHit);
+      setShowConfetti(true);
+      setTimeout(() => setShowConfetti(false), 5000);
+    } else if (earnedAchievements.length > 0) {
+      feedAction = `earned the ${earnedAchievements[0].badge_name} badge! (+${xpGained} XP)`;
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 5000);
     }
@@ -393,12 +531,14 @@ export default function Workouts({ session }) {
     } else {
       await Promise.all(exercises.map(async (ex) => {
         if (ex.completed) {
-          await supabase.from('exercises').update({ completed: false }).eq('id', ex.id);
+          await supabase.from('exercises').update({ completed: false, reps_completed: null, weight_used: null }).eq('id', ex.id);
         }
       }));
-      setExercises(exercises.map(ex => ({ ...ex, completed: false })));
+      setExercises(exercises.map(ex => ({ ...ex, completed: false, reps_completed: null, weight_used: null })));
     }
     
+    setIsTimerRunning(false);
+    setTimerSeconds(0);
     setFinishing(false);
 
     toast?.success(`🎉 ${routineName} workout logged! Great work!`);
@@ -465,6 +605,36 @@ export default function Workouts({ session }) {
                     {completedCount} of {exercises.length} exercises completed
                   </p>
                 )}
+                
+                {/* Timer UI */}
+                {!isRestDay && (
+                  <div className="flex items-center gap-3 mt-3">
+                    <span style={{ 
+                      fontSize: '1.25rem', 
+                      fontWeight: 700, 
+                      color: isTimerRunning ? 'var(--accent)' : 'var(--text-secondary)',
+                      fontVariantNumeric: 'tabular-nums' 
+                    }}>
+                      {formatTime(timerSeconds)}
+                    </span>
+                    <button 
+                      onClick={() => setIsTimerRunning(!isTimerRunning)} 
+                      className={`btn-icon ${isTimerRunning ? 'btn-secondary' : 'btn-primary'}`} 
+                      style={{ width: '32px', height: '32px', borderRadius: '50%' }}
+                    >
+                      {isTimerRunning ? <Square size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" style={{ marginLeft: '2px' }} />}
+                    </button>
+                    {!isTimerRunning && timerSeconds > 0 && (
+                      <button 
+                        onClick={() => setTimerSeconds(0)} 
+                        className="btn-icon btn-ghost" 
+                        style={{ width: '32px', height: '32px', color: 'var(--text-tertiary)' }}
+                      >
+                        <TimerReset size={16} />
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
               {!isRestDay && exercises.length > 0 && (
                 <ProgressRing completed={completedCount} total={exercises.length} />
@@ -527,48 +697,147 @@ export default function Workouts({ session }) {
                          </h3>
 
                          {(ex.sets > 0 || ex.weight > 0 || (ex.reps && ex.reps !== '0') || ex.minutes > 0) && (
-                           <div className="exercise-meta">
-                             {ex.sets > 0 && (
-                               <>
-                                 <span style={{ fontWeight: 500 }}>{ex.sets} Sets</span>
-                                 <div className="exercise-meta-dot" />
-                               </>
-                             )}
+                          <div className="exercise-meta" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' }}>
+                            {ex.sets > 0 && (
+                              <>
+                                <span style={{ fontWeight: 500 }}>{ex.sets} Sets</span>
+                                <div className="exercise-meta-dot" />
+                              </>
+                            )}
 
-                             {ex.minutes > 0 && (
-                               <>
-                                 <span style={{ fontWeight: 500 }}>{ex.minutes} Mins</span>
-                                 <div className="exercise-meta-dot" />
-                               </>
-                             )}
+                            {ex.minutes > 0 && (
+                              <>
+                                <span style={{ fontWeight: 500 }}>{ex.minutes} Mins</span>
+                                <div className="exercise-meta-dot" />
+                              </>
+                            )}
 
-                             <div className="flex items-center gap-1">
-                               <input
-                                 type="text"
-                                 value={ex.reps}
-                                 onChange={e => handleLocalChange(ex.id, 'reps', e.target.value)}
-                                 onBlur={e => handleBlurSave(ex.id, 'reps', e.target.value)}
-                                 className="exercise-inline-input"
-                               />
-                               <span>Reps</span>
-                             </div>
+                            {/* Global Inputs - Always visible unless they explicitly toggle advanced tracking */}
+                            {!ex.is_tracking_sets && (
+                              <>
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="text"
+                                    value={ex.reps}
+                                    onChange={e => handleLocalChange(ex.id, 'reps', e.target.value)}
+                                    onBlur={e => handleBlurSave(ex.id, 'reps', e.target.value)}
+                                    className="exercise-inline-input"
+                                  />
+                                  <span>Reps</span>
+                                </div>
+                                <div className="exercise-meta-dot" />
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="number"
+                                    step="0.5"
+                                    value={ex.weight}
+                                    onChange={e => handleLocalChange(ex.id, 'weight', e.target.value)}
+                                    onBlur={e => handleBlurSave(ex.id, 'weight', e.target.value)}
+                                    className="exercise-inline-input"
+                                    style={{ width: '50px' }}
+                                  />
+                                  <span>kg</span>
+                                </div>
+                              </>
+                            )}
 
-                             <div className="exercise-meta-dot" />
+                            {/* Toggle Button for Set-by-Set Tracking */}
+                            {ex.sets > 0 && (
+                              <button
+                                onClick={() => handleLocalChange(ex.id, 'is_tracking_sets', !ex.is_tracking_sets)}
+                                style={{
+                                  marginLeft: 'auto',
+                                  fontSize: '0.75rem',
+                                  fontWeight: 600,
+                                  color: ex.is_tracking_sets ? 'var(--accent)' : 'var(--text-tertiary)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '4px 8px',
+                                  borderRadius: 'var(--radius-sm)',
+                                  backgroundColor: ex.is_tracking_sets ? 'rgba(255, 120, 84, 0.1)' : 'var(--bg-elevated)',
+                                  transition: 'all 0.2s'
+                                }}
+                              >
+                                {ex.is_tracking_sets ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                {ex.is_tracking_sets ? 'Hide Sets' : 'Log Sets'}
+                              </button>
+                            )}
+                          </div>
+                          )}
 
-                             <div className="flex items-center gap-1">
-                               <input
-                                 type="number"
-                                 step="0.5"
-                                 value={ex.weight}
-                                 onChange={e => handleLocalChange(ex.id, 'weight', e.target.value)}
-                                 onBlur={e => handleBlurSave(ex.id, 'weight', e.target.value)}
-                                 className="exercise-inline-input"
-                                 style={{ width: '50px' }}
-                               />
-                               <span>kg</span>
-                             </div>
-                           </div>
-                         )}
+                          {/* Set-by-Set Tracking Rows (Sleek & Compact) */}
+                          {ex.sets > 0 && ex.is_tracking_sets && (
+                            <div className="flex-col mt-3" style={{ display: 'flex', gap: '1px', backgroundColor: 'var(--border)', padding: '1px', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+                              {Array.from({ length: parseInt(ex.sets) || 0 }).map((_, i) => {
+                                const isSetCompleted = !!(ex.logged_sets && ex.logged_sets[i]);
+                                const draft = ex.set_drafts?.[i] || { reps: ex.reps, weight: ex.weight };
+                                
+                                return (
+                                  <div key={i} style={{ 
+                                    display: 'flex', 
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    backgroundColor: isSetCompleted ? 'var(--bg-surface)' : 'var(--bg-elevated)',
+                                    padding: '8px 12px',
+                                    opacity: isSetCompleted ? 0.6 : 1,
+                                    transition: 'all 0.2s'
+                                  }}>
+                                    <div style={{ fontWeight: 600, fontSize: '0.75rem', color: 'var(--text-tertiary)', width: '40px' }}>
+                                      SET {i + 1}
+                                    </div>
+                                    
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                      <div className="flex items-center gap-1">
+                                        <input
+                                          type="text"
+                                          value={isSetCompleted ? (ex.logged_sets[i].reps) : draft.reps}
+                                          onChange={e => handleSetDraftChange(ex.id, i, 'reps', e.target.value)}
+                                          disabled={isSetCompleted}
+                                          className="exercise-inline-input"
+                                          style={{ width: '45px', textAlign: 'center', backgroundColor: isSetCompleted ? 'transparent' : 'var(--bg-surface)', padding: '2px 4px' }}
+                                        />
+                                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Reps</span>
+                                      </div>
+                                      
+                                      <div className="flex items-center gap-1">
+                                        <input
+                                          type="number"
+                                          step="0.5"
+                                          value={isSetCompleted ? (ex.logged_sets[i].weight) : draft.weight}
+                                          onChange={e => handleSetDraftChange(ex.id, i, 'weight', e.target.value)}
+                                          disabled={isSetCompleted}
+                                          className="exercise-inline-input"
+                                          style={{ width: '50px', textAlign: 'center', backgroundColor: isSetCompleted ? 'transparent' : 'var(--bg-surface)', padding: '2px 4px' }}
+                                        />
+                                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>kg</span>
+                                      </div>
+                                    </div>
+                                    
+                                    <button
+                                      onClick={() => toggleSet(ex.id, i)}
+                                      style={{
+                                        width: '24px',
+                                        height: '24px',
+                                        borderRadius: '50%',
+                                        display: 'flex', 
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        backgroundColor: isSetCompleted ? 'var(--accent)' : 'transparent',
+                                        color: isSetCompleted ? 'var(--bg-surface)' : 'var(--text-tertiary)',
+                                        border: `2px solid ${isSetCompleted ? 'var(--accent)' : 'var(--border)'}`,
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s',
+                                        marginLeft: '12px'
+                                      }}
+                                    >
+                                      {isSetCompleted && <Check size={14} strokeWidth={3} />}
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                        </div>
                      </div>
                    ))}
@@ -578,10 +847,14 @@ export default function Workouts({ session }) {
                 {/* Add Exercise Form */}
                 <div style={{ borderTop: '1px solid var(--divider)', paddingTop: 'var(--space-6)', marginTop: 'var(--space-6)' }}>
                   <p className="text-label mb-3">Quick Add</p>
+                  <datalist id="exercise-suggestions">
+                    {pastExercises.map(name => <option key={name} value={name} />)}
+                  </datalist>
                   <form onSubmit={handleAddExercise} className="flex gap-2 flex-wrap items-end">
                     <div style={{ flex: '1 1 150px' }}>
                       <input
                         type="text"
+                        list="exercise-suggestions"
                         placeholder="Exercise Name"
                         value={newExercise.name}
                         onChange={e => setNewExercise({ ...newExercise, name: e.target.value })}

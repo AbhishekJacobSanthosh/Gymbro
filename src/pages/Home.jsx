@@ -27,7 +27,7 @@ const CustomTooltip = ({ active, payload, label }) => {
       padding: '0.5rem 0.75rem',
       boxShadow: 'var(--shadow-md)',
     }}>
-      <p style={{ color: 'var(--text-tertiary)', fontSize: '0.6875rem', marginBottom: '0.125rem' }}>{label}</p>
+      <p style={{ color: 'var(--text-tertiary)', fontSize: '0.6875rem', marginBottom: '0.125rem' }}>{payload[0].payload.date} {payload[0].payload.time}</p>
       <p style={{ color: 'var(--accent)', fontSize: '0.9375rem', fontWeight: 600 }}>{payload[0].value} kg</p>
     </div>
   );
@@ -125,7 +125,9 @@ export default function Home({ session }) {
 
     if (weights) {
       setWeightData(weights.map(w => ({
-        date: new Date(w.logged_at).toLocaleDateString('en-US', { weekday: 'short' }),
+        id: new Date(w.logged_at).getTime(),
+        date: new Date(w.logged_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        time: new Date(w.logged_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
         weight: w.weight
       })));
     }
@@ -173,7 +175,7 @@ export default function Home({ session }) {
     // Fetch all workouts to calculate stats
     const { data: allWorkouts } = await supabase
       .from('workouts')
-      .select('id, completed, completed_at, is_rest_day, day_of_week, created_at, exercises(sets, reps, weight)')
+      .select('id, completed, completed_at, is_rest_day, day_of_week, created_at, exercises(sets, reps, weight, logged_sets)')
       .eq('user_id', session.user.id);
 
     let streak = 0;
@@ -231,16 +233,30 @@ export default function Home({ session }) {
           let vol = 0;
           if (w.exercises) {
             w.exercises.forEach(ex => {
-               let reps = 0;
-               if (typeof ex.reps === 'string') {
-                 const match = ex.reps.match(/\d+/);
-                 if (match) reps = parseInt(match[0]);
-               } else {
-                 reps = parseInt(ex.reps) || 0;
-               }
-               const weight = parseFloat(ex.weight) || 0;
-               const sets = parseInt(ex.sets) || 0;
-               vol += (sets * reps * weight);
+              if (ex.logged_sets && Object.keys(ex.logged_sets).length > 0) {
+                Object.values(ex.logged_sets).forEach(set => {
+                  let reps = 0;
+                  if (typeof set.reps === 'string') {
+                    const match = set.reps.match(/\d+/);
+                    if (match) reps = parseInt(match[0]);
+                  } else {
+                    reps = parseInt(set.reps) || 0;
+                  }
+                  const weight = parseFloat(set.weight) || 0;
+                  vol += (reps * weight);
+                });
+              } else {
+                let reps = 0;
+                if (typeof ex.reps === 'string') {
+                  const match = ex.reps.match(/\d+/);
+                  if (match) reps = parseInt(match[0]);
+                } else {
+                  reps = parseInt(ex.reps) || 0;
+                }
+                const weight = parseFloat(ex.weight) || 0;
+                const sets = parseInt(ex.sets) || 0;
+                vol += (sets * reps * weight);
+              }
             });
           }
           
@@ -450,7 +466,16 @@ export default function Home({ session }) {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                  <XAxis dataKey="date" stroke="var(--text-quaternary)" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <XAxis 
+                    dataKey="id" 
+                    type="number"
+                    domain={['dataMin', 'dataMax']}
+                    tickFormatter={(id) => new Date(id).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} 
+                    stroke="var(--text-quaternary)" 
+                    tick={{ fontSize: 11 }} 
+                    axisLine={false} 
+                    tickLine={false} 
+                  />
                   <YAxis domain={['dataMin - 1', 'dataMax + 1']} stroke="var(--text-quaternary)" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} width={40} />
                   <Tooltip content={<CustomTooltip />} />
                   <Area
