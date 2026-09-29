@@ -21,6 +21,7 @@ export default function Templates({ session }) {
   // Drag and Drop State
   const [draggedIdx, setDraggedIdx] = useState(null);
   const [dragOverIdx, setDragOverIdx] = useState(null);
+  const [activeDragId, setActiveDragId] = useState(null);
 
   const [newExercise, setNewExercise] = useState({ name: '', sets: '', reps: '', weight: '', minutes: '' });
   const [addingExercise, setAddingExercise] = useState(false);
@@ -197,7 +198,7 @@ export default function Templates({ session }) {
     setDraggedIdx(index);
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', index);
+      e.dataTransfer.setData('application/gymbro-index', index);
     }
   };
 
@@ -370,7 +371,7 @@ export default function Templates({ session }) {
                             <div 
                               key={ex.id} 
                               className={`exercise-grid-row ${dragOverIdx === idx ? 'drag-over' : ''}`}
-                              draggable
+                              draggable={activeDragId === ex.id}
                               onDragStart={(e) => handleDragStart(e, idx)}
                               onDragEnter={(e) => handleDragEnter(e, idx)}
                               onDragOver={handleDragOver}
@@ -380,10 +381,15 @@ export default function Templates({ session }) {
                                 borderTop: dragOverIdx === idx && draggedIdx > idx ? '2px solid var(--accent)' : 'none',
                                 borderBottom: dragOverIdx === idx && draggedIdx < idx ? '2px solid var(--accent)' : 'none',
                                 transition: 'all 0.2s ease',
-                                cursor: 'grab'
+                                cursor: activeDragId === ex.id ? 'grabbing' : 'default'
                               }}
                             >
-                              <div style={{ display: 'flex', alignItems: 'center', cursor: 'grab', color: 'var(--text-tertiary)', paddingRight: '8px' }}>
+                              <div 
+                                style={{ display: 'flex', alignItems: 'center', cursor: 'grab', color: 'var(--text-tertiary)', paddingRight: '8px' }}
+                                onMouseDown={() => setActiveDragId(ex.id)}
+                                onMouseUp={() => setActiveDragId(null)}
+                                onMouseLeave={() => setActiveDragId(null)}
+                              >
                                 <GripVertical size={16} />
                               </div>
                               <input
