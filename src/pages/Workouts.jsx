@@ -303,44 +303,62 @@ export default function Workouts({ session }) {
   };
 
   const toggleComplete = async (id, currentStatus) => {
+    const targetEx = exercises.find(e => e.id === id);
+    if (!targetEx) return;
+
+    let payload = { completed: !currentStatus };
+
+    // If completing the exercise via the big circle, save all set drafts into logged_sets
+    if (!currentStatus) {
+      const newLoggedSets = { ...(targetEx.logged_sets || {}) };
+      const setsCount = parseInt(targetEx.sets) || 0;
+      for (let i = 0; i < setsCount; i++) {
+        if (!newLoggedSets[i]) {
+          newLoggedSets[i] = { ...(targetEx.set_drafts?.[i] || { reps: targetEx.reps, weight: targetEx.weight }) };
+        }
+      }
+      payload.logged_sets = newLoggedSets;
+    }
+
     const { error } = await supabase
       .from('exercises')
-      .update({ completed: !currentStatus })
+      .update(payload)
       .eq('id', id);
 
     if (!error) {
       setExercises(exercises.map(ex =>
-        ex.id === id ? { ...ex, completed: !currentStatus } : ex
+        ex.id === id ? { ...ex, completed: !currentStatus, logged_sets: payload.logged_sets || ex.logged_sets } : ex
       ));
     }
   };
 
-  const toggleSet = (exId, setIndex) => {
+  const toggleSet = async (exId, setIndex) => {
+    const targetEx = exercises.find(e => e.id === exId);
+    if (!targetEx) return;
+
+    const loggedSets = targetEx.logged_sets || {};
+    const isCompleted = !!loggedSets[setIndex];
+    
+    let newLoggedSets = { ...loggedSets };
+    if (isCompleted) {
+      delete newLoggedSets[setIndex];
+    } else {
+      newLoggedSets[setIndex] = { ...(targetEx.set_drafts?.[setIndex] || { reps: targetEx.reps, weight: targetEx.weight }) };
+    }
+    
+    const completedCount = Object.keys(newLoggedSets).length;
+    let newCompletedStatus = targetEx.completed;
+    
+    if (!isCompleted && completedCount === (parseInt(targetEx.sets) || 0)) {
+       newCompletedStatus = true;
+    } else if (isCompleted && targetEx.completed) {
+       newCompletedStatus = false;
+    }
+
+    await supabase.from('exercises').update({ completed: newCompletedStatus, logged_sets: newLoggedSets }).eq('id', exId);
+
     setExercises(exercises.map(ex => {
       if (ex.id === exId) {
-        const loggedSets = ex.logged_sets || {};
-        const isCompleted = !!loggedSets[setIndex];
-        
-        let newLoggedSets = { ...loggedSets };
-        if (isCompleted) {
-          delete newLoggedSets[setIndex];
-        } else {
-          newLoggedSets[setIndex] = { ...(ex.set_drafts?.[setIndex] || { reps: ex.reps, weight: ex.weight }) };
-        }
-        
-        // Auto-complete the exercise if all sets are done
-        const completedCount = Object.keys(newLoggedSets).length;
-        let newCompletedStatus = ex.completed;
-        if (!isCompleted && completedCount === (parseInt(ex.sets) || 0)) {
-           newCompletedStatus = true;
-           supabase.from('exercises').update({ completed: true, logged_sets: newLoggedSets }).eq('id', exId);
-        } else {
-           if (isCompleted && ex.completed) {
-             newCompletedStatus = false;
-           }
-           supabase.from('exercises').update({ completed: newCompletedStatus, logged_sets: newLoggedSets }).eq('id', exId);
-        }
-        
         return { ...ex, logged_sets: newLoggedSets, completed: newCompletedStatus };
       }
       return ex;
