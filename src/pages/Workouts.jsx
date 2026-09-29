@@ -726,12 +726,12 @@ export default function Workouts({ session }) {
                             {ex.minutes > 0 && (
                               <>
                                 <span style={{ fontWeight: 500 }}>{ex.minutes} Mins</span>
-                                <div className="exercise-meta-dot" />
+                                {(!ex.is_tracking_sets && ex.sets > 0) && <div className="exercise-meta-dot" />}
                               </>
                             )}
 
-                            {/* Global Inputs - Always visible unless they explicitly toggle advanced tracking */}
-                            {!ex.is_tracking_sets && (
+                            {/* Global Inputs - Always visible unless they explicitly toggle advanced tracking or have 0 sets */}
+                            {!ex.is_tracking_sets && ex.sets > 0 && (
                               <>
                                 <div className="flex items-center gap-1">
                                   <input

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Dumbbell, Coffee, Edit3, Save, Check, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Dumbbell, Coffee, Edit3, Save, Check, Loader2, GripVertical } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -17,6 +17,10 @@ export default function Templates({ session }) {
   const [routineName, setRoutineName] = useState('Workout');
   const [isRestDay, setIsRestDay] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
+
+  // Drag and Drop State
+  const [draggedIdx, setDraggedIdx] = useState(null);
+  const [dragOverIdx, setDragOverIdx] = useState(null);
 
   const [newExercise, setNewExercise] = useState({ name: '', sets: '', reps: '', weight: '', minutes: '' });
   const [addingExercise, setAddingExercise] = useState(false);
@@ -189,6 +193,49 @@ export default function Templates({ session }) {
     }
   };
 
+  const handleDragStart = (e, index) => {
+    setDraggedIdx(index);
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', index);
+    }
+  };
+
+  const handleDragEnter = (e, index) => {
+    e.preventDefault();
+    setDragOverIdx(index);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+  };
+
+  const handleDragEnd = async () => {
+    if (draggedIdx !== null && dragOverIdx !== null && draggedIdx !== dragOverIdx) {
+      const newExercises = [...exercises];
+      const draggedItem = newExercises[draggedIdx];
+      newExercises.splice(draggedIdx, 1);
+      newExercises.splice(dragOverIdx, 0, draggedItem);
+      
+      setExercises(newExercises);
+
+      // Save order to DB by modifying created_at
+      const now = Date.now();
+      const updates = newExercises.map((ex, idx) => ({
+        id: ex.id,
+        created_at: new Date(now + idx * 1000).toISOString()
+      }));
+
+      await Promise.all(
+        updates.map(update => 
+          supabase.from('exercises').update({ created_at: update.created_at }).eq('id', update.id)
+        )
+      );
+    }
+    setDraggedIdx(null);
+    setDragOverIdx(null);
+  };
+
   const todayIndex = new Date().getDay();
 
   return (
@@ -319,22 +366,40 @@ export default function Templates({ session }) {
                           {/* Show grid header on desktop */}
                           <style>{`.exercise-grid-header { display: none !important; } @media (min-width: 641px) { .exercise-grid-header { display: flex !important; } }`}</style>
 
-                          {exercises.map(ex => (
-                            <div key={ex.id} className="exercise-grid-row">
+                          {exercises.map((ex, idx) => (
+                            <div 
+                              key={ex.id} 
+                              className={`exercise-grid-row ${dragOverIdx === idx ? 'drag-over' : ''}`}
+                              draggable
+                              onDragStart={(e) => handleDragStart(e, idx)}
+                              onDragEnter={(e) => handleDragEnter(e, idx)}
+                              onDragOver={handleDragOver}
+                              onDragEnd={handleDragEnd}
+                              style={{ 
+                                opacity: draggedIdx === idx ? 0.5 : 1,
+                                borderTop: dragOverIdx === idx && draggedIdx > idx ? '2px solid var(--accent)' : 'none',
+                                borderBottom: dragOverIdx === idx && draggedIdx < idx ? '2px solid var(--accent)' : 'none',
+                                transition: 'all 0.2s ease',
+                                cursor: 'grab'
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', cursor: 'grab', color: 'var(--text-tertiary)', paddingRight: '8px' }}>
+                                <GripVertical size={16} />
+                              </div>
                               <input
                                 type="text"
                                 list="exercise-suggestions"
                                 value={ex.name}
                                 onChange={e => handleLocalChange(ex.id, 'name', e.target.value)}
                                 onBlur={e => handleBlurSave(ex.id, 'name', e.target.value)}
-                                style={{ flex: 3, minWidth: 0, fontWeight: 500 }}
+                                style={{ flex: 3, minWidth: 0, fontWeight: 500, cursor: 'text' }}
                               />
                               <input
                                 type="number"
                                 value={ex.sets}
                                 onChange={e => handleLocalChange(ex.id, 'sets', e.target.value)}
                                 onBlur={e => handleBlurSave(ex.id, 'sets', e.target.value)}
-                                style={{ flex: 1, minWidth: 0, textAlign: 'center', padding: '0.5rem 0.25rem' }}
+                                style={{ flex: 1, minWidth: 0, textAlign: 'center', padding: '0.5rem 0.25rem', cursor: 'text' }}
                                 placeholder="Sets"
                               />
                               <input
@@ -342,7 +407,7 @@ export default function Templates({ session }) {
                                 value={ex.reps}
                                 onChange={e => handleLocalChange(ex.id, 'reps', e.target.value)}
                                 onBlur={e => handleBlurSave(ex.id, 'reps', e.target.value)}
-                                style={{ flex: 1, minWidth: 0, textAlign: 'center', padding: '0.5rem 0.25rem' }}
+                                style={{ flex: 1, minWidth: 0, textAlign: 'center', padding: '0.5rem 0.25rem', cursor: 'text' }}
                                 placeholder="Reps"
                               />
                               <input
@@ -351,7 +416,7 @@ export default function Templates({ session }) {
                                 value={ex.weight}
                                 onChange={e => handleLocalChange(ex.id, 'weight', e.target.value)}
                                 onBlur={e => handleBlurSave(ex.id, 'weight', e.target.value)}
-                                style={{ flex: 1, minWidth: 0, textAlign: 'center', padding: '0.5rem 0.25rem' }}
+                                style={{ flex: 1, minWidth: 0, textAlign: 'center', padding: '0.5rem 0.25rem', cursor: 'text' }}
                                 placeholder="kg"
                               />
                               <input
@@ -359,13 +424,13 @@ export default function Templates({ session }) {
                                 value={ex.minutes || ''}
                                 onChange={e => handleLocalChange(ex.id, 'minutes', e.target.value)}
                                 onBlur={e => handleBlurSave(ex.id, 'minutes', e.target.value)}
-                                style={{ flex: 1, minWidth: 0, textAlign: 'center', padding: '0.5rem 0.25rem' }}
+                                style={{ flex: 1, minWidth: 0, textAlign: 'center', padding: '0.5rem 0.25rem', cursor: 'text' }}
                                 placeholder="Mins"
                               />
                               <button
                                 onClick={() => removeExercise(ex.id)}
                                 className="btn-icon btn-danger"
-                                style={{ width: '36px', height: '36px', flexShrink: 0 }}
+                                style={{ width: '36px', height: '36px', flexShrink: 0, cursor: 'pointer' }}
                               >
                                 <Trash2 size={16} />
                               </button>
