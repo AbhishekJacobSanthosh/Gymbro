@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { User, Save, LogOut, Loader2, Mail, Medal, Award } from 'lucide-react';
+import { User, Save, LogOut, Loader2, Mail, Medal, Award, Snowflake } from 'lucide-react';
 import { useToast } from '../App';
+import { getGracePeriodsUsedThisMonth } from '../lib/utils';
 
 let hasLoadedOnce = false;
 
@@ -14,6 +15,7 @@ export default function Profile({ session }) {
   const [xp, setXp] = useState(0);
   const [color, setColor] = useState('#ff7854');
   const [achievements, setAchievements] = useState([]);
+  const [gracePeriodsRemaining, setGracePeriodsRemaining] = useState(3);
   
   const COLORS = ['#ff7854', '#4ade80', '#60a5fa', '#c084fc', '#facc15', '#f472b6', '#ef4444', '#14b8a6'];
 
@@ -35,6 +37,33 @@ export default function Profile({ session }) {
         .eq('user_id', user.id)
         .order('achieved_at', { ascending: false });
 
+      // Fetch all workouts to calculate grace periods remaining this month
+      const { data: allWorkouts } = await supabase
+        .from('workouts')
+        .select('id, completed, completed_at, is_rest_day, day_of_week, created_at')
+        .eq('user_id', user.id);
+
+      let usedGrace = 0;
+      if (allWorkouts && allWorkouts.length > 0) {
+        const templates = allWorkouts.filter(w => !w.completed && w.routine_name !== 'Spontaneous Workout');
+        templates.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        
+        const templatesByDay = {};
+        const restDaysOfWeek = new Set();
+        templates.forEach(t => {
+          if (!templatesByDay[t.day_of_week]) {
+            templatesByDay[t.day_of_week] = t;
+            if (t.is_rest_day) restDaysOfWeek.add(t.day_of_week);
+          }
+        });
+        
+        const completedHistory = allWorkouts
+          .filter(w => w.completed)
+          .sort((a, b) => new Date(b.completed_at) - new Date(a.completed_at));
+          
+        usedGrace = getGracePeriodsUsedThisMonth(completedHistory, restDaysOfWeek);
+      }
+
       if (!ignore) {
         if (error) {
           console.warn(error);
@@ -47,6 +76,7 @@ export default function Profile({ session }) {
         if (achData) {
           setAchievements(achData);
         }
+        setGracePeriodsRemaining(Math.max(0, 3 - usedGrace));
       }
       hasLoadedOnce = true;
       setLoading(false);
@@ -140,9 +170,14 @@ export default function Profile({ session }) {
                     borderRadius: '3px' 
                   }} />
                 </div>
-                <p style={{ fontSize: '0.6875rem', color: 'var(--text-tertiary)', textAlign: 'right', marginTop: 'var(--space-1)' }}>
-                  Next level: {Math.pow(level, 2) * 100} XP
-                </p>
+                <div className="flex justify-between items-center" style={{ marginTop: 'var(--space-2)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--text-tertiary)', fontSize: '0.75rem' }}>
+                    <Snowflake size={12} /> {gracePeriodsRemaining} Shield{gracePeriodsRemaining !== 1 ? 's' : ''} Left this Month
+                  </div>
+                  <p style={{ fontSize: '0.6875rem', color: 'var(--text-tertiary)', textAlign: 'right' }}>
+                    Next level: {Math.pow(level, 2) * 100} XP
+                  </p>
+                </div>
               </div>
             )}
           </div>
