@@ -312,12 +312,19 @@ export default function Workouts({ session }) {
     if (!currentStatus) {
       const newLoggedSets = { ...(targetEx.logged_sets || {}) };
       const setsCount = parseInt(targetEx.sets) || 0;
+      let maxWeight = parseFloat(targetEx.weight) || 0;
+
       for (let i = 0; i < setsCount; i++) {
         if (!newLoggedSets[i]) {
           newLoggedSets[i] = { ...(targetEx.set_drafts?.[i] || { reps: targetEx.reps, weight: targetEx.weight }) };
         }
+        const setWeight = parseFloat(newLoggedSets[i].weight) || 0;
+        if (setWeight > maxWeight) maxWeight = setWeight;
       }
       payload.logged_sets = newLoggedSets;
+      if (maxWeight > (parseFloat(targetEx.weight) || 0)) {
+        payload.weight = maxWeight;
+      }
     }
 
     const { error } = await supabase
@@ -327,7 +334,7 @@ export default function Workouts({ session }) {
 
     if (!error) {
       setExercises(exercises.map(ex =>
-        ex.id === id ? { ...ex, completed: !currentStatus, logged_sets: payload.logged_sets || ex.logged_sets } : ex
+        ex.id === id ? { ...ex, ...payload } : ex
       ));
     }
   };
@@ -355,11 +362,23 @@ export default function Workouts({ session }) {
        newCompletedStatus = false;
     }
 
-    await supabase.from('exercises').update({ completed: newCompletedStatus, logged_sets: newLoggedSets }).eq('id', exId);
+    let payload = { completed: newCompletedStatus, logged_sets: newLoggedSets };
+    let maxWeight = parseFloat(targetEx.weight) || 0;
+    
+    Object.values(newLoggedSets).forEach(set => {
+      const w = parseFloat(set.weight) || 0;
+      if (w > maxWeight) maxWeight = w;
+    });
+
+    if (maxWeight > (parseFloat(targetEx.weight) || 0)) {
+      payload.weight = maxWeight;
+    }
+
+    await supabase.from('exercises').update(payload).eq('id', exId);
 
     setExercises(exercises.map(ex => {
       if (ex.id === exId) {
-        return { ...ex, logged_sets: newLoggedSets, completed: newCompletedStatus };
+        return { ...ex, ...payload };
       }
       return ex;
     }));
