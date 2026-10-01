@@ -410,7 +410,7 @@ export default function Templates({ session }) {
                               }}
                             >
                               <div 
-                                style={{ display: 'flex', alignItems: 'center', cursor: 'grab', color: 'var(--text-tertiary)', paddingRight: '8px' }}
+                                style={{ display: 'flex', alignItems: 'center', cursor: 'grab', color: 'var(--text-tertiary)', paddingRight: '8px', touchAction: 'none' }}
                                 onMouseDown={() => setActiveDragId(ex.id)}
                                 onMouseUp={() => setActiveDragId(null)}
                                 onMouseLeave={() => setActiveDragId(null)}
