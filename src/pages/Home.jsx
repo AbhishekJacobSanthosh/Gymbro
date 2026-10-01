@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import { TrendingDown, Activity, Trophy, Flame, CheckCircle, Snowflake, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useToast } from '../App';
-import { getGreeting, getRelativeTime, calculateStreak } from '../lib/utils';
+import { getGreeting, getRelativeTime, calculateStreak, getGracePeriodsUsedThisMonth } from '../lib/utils';
 
 const quotes = [
   "The only bad workout is the one that didn't happen.",
@@ -61,16 +61,11 @@ export default function Home({ session }) {
   const [xp, setXp] = useState(0);
   const [todayTemplate, setTodayTemplate] = useState(null);
   const [isTodayCompleted, setIsTodayCompleted] = useState(false);
-  const [isTodayFrozen, setIsTodayFrozen] = useState(false);
+  const [gracePeriodsRemaining, setGracePeriodsRemaining] = useState(3);
   
   // Analytics State
   const [volumeData, setVolumeData] = useState([]);
   const [top1RMs, setTop1RMs] = useState([]);
-  
-  // Freeze state
-  const [isFreezeModalOpen, setIsFreezeModalOpen] = useState(false);
-  const [freezeReason, setFreezeReason] = useState('');
-  const [isFreezing, setIsFreezing] = useState(false);
 
   useEffect(() => {
     setQuote(quotes[Math.floor(Math.random() * quotes.length)]);
@@ -151,26 +146,8 @@ export default function Home({ session }) {
       })));
     }
 
-    // Fetch Streak Freezes
-    const { data: freezes } = await supabase
-      .from('streak_freezes')
-      .select('freeze_date')
-      .eq('user_id', session.user.id);
-
-    let fetchedFreezeDates = new Set();
-    if (freezes) {
-      fetchedFreezeDates = new Set(freezes.map(f => {
-        // Need to parse date string safely. Date strings from postgres are usually YYYY-MM-DD
-        const [year, month, day] = f.freeze_date.split('-');
-        const d = new Date(year, month - 1, day);
-        d.setHours(0, 0, 0, 0);
-        return d.getTime();
-      }));
-    }
-    
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    setIsTodayFrozen(fetchedFreezeDates.has(todayStart.getTime()));
 
     // Fetch all workouts to calculate stats
     const { data: allWorkouts } = await supabase
@@ -223,7 +200,9 @@ export default function Home({ session }) {
 
       // 4. Calculate Streak
       if (completedHistory.length > 0) {
-        streak = calculateStreak(completedHistory, restDaysOfWeek, fetchedFreezeDates);
+        streak = calculateStreak(completedHistory, restDaysOfWeek, 3);
+        const usedGrace = getGracePeriodsUsedThisMonth(completedHistory, restDaysOfWeek);
+        setGracePeriodsRemaining(Math.max(0, 3 - usedGrace));
         
         // 5. Calculate Volume Over Time
         const recentVolumes = [];
@@ -333,36 +312,7 @@ export default function Home({ session }) {
     }
   };
 
-  const handleFreezeStreak = async () => {
-    if (!session?.user) return;
-    setIsFreezing(true);
-    
-    const today = new Date();
-    // Offset by timezone to get local date string YYYY-MM-DD reliably
-    const tzOffset = today.getTimezoneOffset() * 60000;
-    const localISOTime = (new Date(today - tzOffset)).toISOString().slice(0, -1);
-    const freezeDateStr = localISOTime.split('T')[0];
 
-    const { error } = await supabase.from('streak_freezes').insert([{
-      user_id: session.user.id,
-      freeze_date: freezeDateStr,
-      reason: freezeReason
-    }]);
-
-    if (!error) {
-      setIsFreezeModalOpen(false);
-      setFreezeReason('');
-      toast.success('Streak frozen successfully!');
-      fetchData(); // Refresh to recalculate streak
-    } else {
-      if (error.code === '23505') {
-        toast.error('Streak already frozen for today!');
-      } else {
-        toast.error('Failed to freeze streak: ' + error.message);
-      }
-    }
-    setIsFreezing(false);
-  };
 
   const greeting = getGreeting();
 
@@ -397,14 +347,9 @@ export default function Home({ session }) {
           <div>
             <p className="stat-label">Current Streak</p>
             <p className="stat-value">{stats.currentStreak} Days</p>
-            {!isTodayFrozen && (
-              <button 
-                onClick={() => setIsFreezeModalOpen(true)}
-                style={{ background: 'none', border: 'none', padding: 0, color: 'var(--text-tertiary)', fontSize: '0.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}
-              >
-                <Snowflake size={12} /> Freeze Streak
-              </button>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px', color: 'var(--text-tertiary)', fontSize: '0.75rem' }}>
+              <Snowflake size={12} /> {gracePeriodsRemaining} Shield{gracePeriodsRemaining !== 1 ? 's' : ''} Left
+            </div>
           </div>
           <div className="stat-icon" style={{ backgroundColor: 'var(--accent-soft)' }}>
             <Flame size={22} style={{ color: 'var(--accent)' }} />
@@ -658,37 +603,6 @@ export default function Home({ session }) {
         </div>
       </div>
 
-      {/* Freeze Modal */}
-      {isFreezeModalOpen && (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 'var(--space-4)', backdropFilter: 'blur(2px)' }}>
-          <div className="card" style={{ width: '100%', maxWidth: '400px', margin: '0 auto' }}>
-            <div className="flex items-center justify-between mb-4">
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Snowflake size={20} style={{ color: '#60a5fa' }} /> Freeze Streak
-              </h2>
-              <button onClick={() => setIsFreezeModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
-                <X size={20} />
-              </button>
-            </div>
-            <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-4)', fontSize: '0.875rem', lineHeight: 1.5 }}>
-              Feeling sick or need a break? Freeze your streak for today so you don't lose your progress.
-            </p>
-            <input
-              type="text"
-              placeholder="Reason (e.g. Sick, Traveling)"
-              value={freezeReason}
-              onChange={(e) => setFreezeReason(e.target.value)}
-              style={{ width: '100%', marginBottom: 'var(--space-4)' }}
-            />
-            <div className="flex gap-2">
-              <button onClick={() => setIsFreezeModalOpen(false)} className="btn btn-secondary" style={{ flex: 1 }}>Cancel</button>
-              <button onClick={handleFreezeStreak} className="btn btn-primary" style={{ flex: 1 }} disabled={isFreezing}>
-                {isFreezing ? 'Freezing...' : 'Confirm'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

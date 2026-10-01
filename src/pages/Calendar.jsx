@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Flame, Loader2, X, Check } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../App';
-import { calculateStreak } from '../lib/utils';
+import { calculateStreak, calculateXpGained, calculateLevelFromXp, getEarnedAchievements } from '../lib/utils';
 
 let hasLoadedOnce = false;
 
@@ -81,10 +81,7 @@ export default function Calendar({ session }) {
         .eq('completed', true)
         .order('completed_at', { ascending: false });
 
-      // Fetch streak freezes
-      const { data: freezesData } = await supabase
-        .from('streak_freezes')
-        .select('user_id, freeze_date');
+
 
       const profileIds = profileList.map(p => p.id);
 
@@ -139,16 +136,7 @@ export default function Calendar({ session }) {
 
       if (allWorkouts) {
         profileList.forEach(p => {
-          const userFreezes = new Set(
-            (freezesData || [])
-              .filter(f => f.user_id === p.id)
-              .map(f => {
-                const d = new Date(f.freeze_date);
-                d.setHours(0, 0, 0, 0);
-                return d.getTime();
-              })
-          );
-          p.streak = calculateStreak(allWorkouts.filter(w => w.user_id === p.id), userRestDays[p.id], userFreezes);
+          p.streak = calculateStreak(allWorkouts.filter(w => w.user_id === p.id), userRestDays[p.id], 3);
           p.total = userTotals[p.id] || 0;
         });
       }
@@ -296,6 +284,102 @@ export default function Calendar({ session }) {
       }));
       await supabase.from('exercises').insert(completedExercises);
     }
+
+    // --- GAMIFICATION: XP & LEVELING ---
+    let totalVolume = 0;
+    dayExercises.forEach(ex => {
+        let reps = 0;
+        if (typeof ex.reps === 'string') {
+          const match = ex.reps.match(/\d+/);
+          if (match) reps = parseInt(match[0]);
+        } else {
+          reps = parseInt(ex.reps) || 0;
+        }
+        const weight = parseFloat(ex.weight) || 0;
+        const sets = parseInt(ex.sets) || 0;
+        totalVolume += (sets * reps * weight);
+    });
+    
+    const xpGained = calculateXpGained(totalVolume);
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('xp, level')
+      .eq('id', session.user.id)
+      .single();
+      
+    const currentXp = profile?.xp || 0;
+    const newXp = currentXp + xpGained;
+    const newLevel = calculateLevelFromXp(newXp);
+
+    await supabase.from('profiles').update({ xp: newXp, level: newLevel }).eq('id', session.user.id);
+
+    // --- GAMIFICATION: PR CHECK ---
+    let prsHit = [];
+    
+    await Promise.all(dayExercises.map(async (ex) => {
+      if (!ex.name || !ex.weight || ex.weight <= 0) return;
+      
+      const { data: pastEx } = await supabase
+        .from('exercises')
+        .select('weight, workouts!inner(user_id)')
+        .eq('name', ex.name)
+        .eq('workouts.user_id', session.user.id)
+        .order('weight', { ascending: false })
+        .limit(1);
+
+      const pastMax = pastEx && pastEx.length > 0 ? parseFloat(pastEx[0].weight) : 0;
+      
+      if (parseFloat(ex.weight) > pastMax && pastMax > 0) {
+        prsHit.push({ name: ex.name, weight: ex.weight });
+      }
+    }));
+
+    // --- GAMIFICATION: ACHIEVEMENTS CHECK ---
+    const { data: allWorkouts } = await supabase.from('workouts').select('completed, completed_at').eq('user_id', session.user.id).eq('completed', true);
+    
+    const streak = calculateStreak(allWorkouts || [], new Set(), 3);
+    
+    const stats = {
+      totalWorkouts: (allWorkouts?.length || 0),
+      currentStreak: streak,
+      level: newLevel,
+      maxVolume: totalVolume
+    };
+
+    const { data: existingAchievements } = await supabase.from('achievements').select('badge_name').eq('user_id', session.user.id);
+    const earnedAchievements = getEarnedAchievements(stats, existingAchievements || []);
+
+    if (earnedAchievements.length > 0) {
+      await supabase.from('achievements').insert(
+        earnedAchievements.map(ach => ({
+          user_id: session.user.id,
+          badge_name: ach.badge_name,
+          description: ach.description
+        }))
+      );
+      
+      earnedAchievements.forEach(ach => {
+         setTimeout(() => toast?.success(`🏅 Achievement Unlocked: ${ach.badge_name}!`), 1000);
+      });
+    }
+
+    // Add to Activity Feed
+    const routineName = activeTemplate?.routine_name || 'Workout';
+    const cleanRoutineName = routineName.toLowerCase().includes('workout') ? routineName : `${routineName} workout`;
+    let feedAction = `crushed a retroactive ${cleanRoutineName}! (+${xpGained} XP)`;
+    
+    if (prsHit.length > 0) {
+      const prText = prsHit.map(pr => `${pr.name} (${pr.weight}kg)`).join(', ');
+      feedAction = `hit a PR on ${prText} retroactively! (+${xpGained} XP)`;
+    } else if (earnedAchievements.length > 0) {
+      feedAction = `earned the ${earnedAchievements[0].badge_name} badge retroactively! (+${xpGained} XP)`;
+    }
+
+    await supabase.from('activity_feed').insert([{
+      user_id: session.user.id,
+      action: feedAction
+    }]);
 
     // Refresh Calendar
     await fetchCalendarData();

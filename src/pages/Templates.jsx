@@ -237,6 +237,30 @@ export default function Templates({ session }) {
     setDragOverIdx(null);
   };
 
+  const handleTouchStart = (e, index) => {
+    setActiveDragId(exercises[index].id);
+    setDraggedIdx(index);
+    document.body.style.overflow = 'hidden'; // prevent scrolling while dragging
+  };
+
+  const handleTouchMove = (e) => {
+    if (draggedIdx === null) return;
+    const touch = e.touches[0];
+    const element = document.elementFromPoint(touch.clientX, touch.clientY);
+    if (element) {
+      const row = element.closest('.exercise-grid-row');
+      if (row && row.dataset.index !== undefined) {
+        setDragOverIdx(parseInt(row.dataset.index));
+      }
+    }
+  };
+
+  const handleTouchEnd = () => {
+    document.body.style.overflow = ''; 
+    setActiveDragId(null);
+    handleDragEnd();
+  };
+
   const todayIndex = new Date().getDay();
 
   return (
@@ -370,6 +394,7 @@ export default function Templates({ session }) {
                           {exercises.map((ex, idx) => (
                             <div 
                               key={ex.id} 
+                              data-index={idx}
                               className={`exercise-grid-row ${dragOverIdx === idx ? 'drag-over' : ''}`}
                               draggable={activeDragId === ex.id}
                               onDragStart={(e) => handleDragStart(e, idx)}
@@ -389,6 +414,9 @@ export default function Templates({ session }) {
                                 onMouseDown={() => setActiveDragId(ex.id)}
                                 onMouseUp={() => setActiveDragId(null)}
                                 onMouseLeave={() => setActiveDragId(null)}
+                                onTouchStart={(e) => handleTouchStart(e, idx)}
+                                onTouchMove={handleTouchMove}
+                                onTouchEnd={handleTouchEnd}
                               >
                                 <GripVertical size={16} />
                               </div>

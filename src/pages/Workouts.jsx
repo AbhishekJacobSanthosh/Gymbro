@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Check, Dumbbell, Coffee, Loader2, Trophy, Undo2, Plus, Play, Square, TimerReset, ChevronDown, ChevronUp } from 'lucide-react';
+import { Check, Dumbbell, Coffee, Loader2, Trophy, Undo2, Plus, Play, Square, TimerReset, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../App';
 import { calculateXpGained, calculateLevelFromXp, calculateStreak, getEarnedAchievements } from '../lib/utils';
@@ -68,6 +68,7 @@ export default function Workouts({ session }) {
   const [addingExercise, setAddingExercise] = useState(false);
   const [isTodayCompleted, setIsTodayCompleted] = useState(false);
   const [completedWorkoutId, setCompletedWorkoutId] = useState(null);
+  const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
 
   // Timer State
   const [timerSeconds, setTimerSeconds] = useState(0);
@@ -212,6 +213,20 @@ export default function Workouts({ session }) {
     setLoading(false);
   };
 
+  const handleCancelSpontaneous = async () => {
+    if (!workoutId) return;
+    
+    setLoading(true);
+    setIsCancelModalOpen(false);
+    await supabase.from('exercises').delete().eq('workout_id', workoutId);
+    await supabase.from('workouts').delete().eq('id', workoutId);
+    
+    setWorkoutId(null);
+    setExercises([]);
+    setRoutineName('No Template');
+    fetchTodayWorkout();
+  };
+
   const handleStartSecondWorkout = async () => {
     setIsTodayCompleted(false);
     await handleStartSpontaneous();
@@ -325,6 +340,9 @@ export default function Workouts({ session }) {
       if (maxWeight > (parseFloat(targetEx.weight) || 0)) {
         payload.weight = maxWeight;
       }
+    } else {
+      // Unchecking the big circle should uncheck all individual sets
+      payload.logged_sets = null;
     }
 
     const { error } = await supabase
@@ -409,6 +427,7 @@ export default function Workouts({ session }) {
 
   const finishWorkout = async () => {
     if (!allDone) return;
+    
     setFinishing(true);
 
     const { error: wError, data: newWorkout } = await supabase
@@ -513,7 +532,7 @@ export default function Workouts({ session }) {
     
     // We haven't fetched rest days or freezes here, but for simple achievements, we can just use total workouts.
     // To be precise on streak, we can just pass an empty set for freezes and rest days.
-    const streak = calculateStreak(allWorkouts || [], new Set(), new Set());
+    const streak = calculateStreak(allWorkouts || [], new Set(), 3);
     
     const stats = {
       totalWorkouts: (allWorkouts?.length || 0),
@@ -568,10 +587,10 @@ export default function Workouts({ session }) {
     } else {
       await Promise.all(exercises.map(async (ex) => {
         if (ex.completed) {
-          await supabase.from('exercises').update({ completed: false, reps_completed: null, weight_used: null }).eq('id', ex.id);
+          await supabase.from('exercises').update({ completed: false, logged_sets: null }).eq('id', ex.id);
         }
       }));
-      setExercises(exercises.map(ex => ({ ...ex, completed: false, reps_completed: null, weight_used: null })));
+      setExercises(exercises.map(ex => ({ ...ex, completed: false, logged_sets: null })));
     }
     
     setIsTimerRunning(false);
@@ -968,6 +987,17 @@ export default function Workouts({ session }) {
                        </>
                      )}
                    </button>
+                   
+                   {routineName === 'Spontaneous Workout' && (
+                     <button
+                       onClick={() => setIsCancelModalOpen(true)}
+                       className="btn btn-secondary btn-lg finish-cta"
+                       style={{ width: '100%', maxWidth: '320px', marginTop: 'var(--space-4)', backgroundColor: 'transparent', color: 'var(--error)', border: '1px solid var(--error)' }}
+                     >
+                       Cancel Workout
+                     </button>
+                   )}
+
                    {!allDone && exercises.length > 0 && (
                      <p style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem', marginTop: 'var(--space-3)' }}>
                        Complete all exercises to finish your workout
@@ -979,6 +1009,30 @@ export default function Workouts({ session }) {
            </>
          )}
        </div>
+
+       {isCancelModalOpen && (
+         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 'var(--space-4)', backdropFilter: 'blur(2px)' }}>
+           <div className="card" style={{ width: '100%', maxWidth: '400px', margin: '0 auto' }}>
+             <div className="flex items-center justify-between mb-4">
+               <h2 style={{ fontSize: '1.25rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                 Cancel Workout
+               </h2>
+               <button onClick={() => setIsCancelModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
+                 <X size={20} />
+               </button>
+             </div>
+             <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-4)', fontSize: '0.875rem', lineHeight: 1.5 }}>
+               Are you sure you want to cancel this spontaneous workout? All logged sets and progress for this session will be permanently deleted.
+             </p>
+             <div className="flex gap-2">
+               <button onClick={() => setIsCancelModalOpen(false)} className="btn btn-secondary" style={{ flex: 1 }}>No, Keep It</button>
+               <button onClick={handleCancelSpontaneous} className="btn" style={{ flex: 1, backgroundColor: 'var(--error)', color: 'white' }}>
+                 Yes, Cancel
+               </button>
+             </div>
+           </div>
+         </div>
+       )}
     </div>
   );
 }
