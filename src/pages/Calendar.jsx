@@ -323,7 +323,7 @@ export default function Calendar({ session }) {
       const { data: pastEx } = await supabase
         .from('exercises')
         .select('weight, workouts!inner(user_id)')
-        .eq('name', ex.name)
+        .ilike('name', ex.name)
         .eq('workouts.user_id', session.user.id)
         .order('weight', { ascending: false })
         .limit(1);

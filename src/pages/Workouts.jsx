@@ -545,7 +545,7 @@ export default function Workouts({ session }) {
       const { data: pastEx } = await supabase
         .from('exercises')
         .select('weight, workouts!inner(user_id)')
-        .eq('name', ex.name)
+        .ilike('name', ex.name)
         .eq('workouts.user_id', session.user.id)
         .lt('created_at', ex.created_at || new Date().toISOString()) 
         .order('weight', { ascending: false })
