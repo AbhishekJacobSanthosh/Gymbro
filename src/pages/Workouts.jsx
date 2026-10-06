@@ -161,25 +161,49 @@ export default function Workouts({ session }) {
       setExercises([]);
       setWorkoutId(null);
     } else {
-      setRoutineName(templates[0].routine_name || 'Workout');
-      setIsRestDay(templates[0].is_rest_day || false);
-      setWorkoutId(templates[0].id);
+      const template = templates[0];
+      setRoutineName(template.routine_name || 'Workout');
+      setIsRestDay(template.is_rest_day || false);
+      setWorkoutId(template.id);
 
       // Fetch exercises for today's template
       const { data: exData } = await supabase
         .from('exercises')
         .select('*')
-        .eq('workout_id', templates[0].id)
+        .eq('workout_id', template.id)
         .order('created_at', { ascending: true });
 
-      const formattedExData = (exData || []).map(ex => {
-        const drafts = {};
-        const setsCount = parseInt(ex.sets) || 0;
-        for (let i = 0; i < setsCount; i++) {
-          drafts[i] = ex.logged_sets?.[i] || { reps: ex.reps, weight: ex.weight };
-        }
-        return { ...ex, set_drafts: drafts };
-      });
+      // Clean up stale progress from previous weeks!
+      // If the user checked off exercises last week but never clicked "Finish Workout", 
+      // they stay checked. If completed_at is older than 12 hours or null, reset them.
+      let formattedExData = [];
+      const hasChecked = exData && exData.some(ex => ex.completed || (ex.logged_sets && Object.keys(ex.logged_sets).length > 0));
+      const lastTouched = template.completed_at ? new Date(template.completed_at).getTime() : 0;
+      const now = new Date().getTime();
+      const isStale = hasChecked && (now - lastTouched > 12 * 60 * 60 * 1000);
+
+      if (isStale) {
+        // Reset in DB
+        await supabase.from('exercises').update({ completed: false, logged_sets: null }).eq('workout_id', template.id);
+        // Reset locally
+        formattedExData = (exData || []).map(ex => {
+          const drafts = {};
+          const setsCount = parseInt(ex.sets) || 0;
+          for (let i = 0; i < setsCount; i++) {
+            drafts[i] = { reps: ex.reps, weight: ex.weight };
+          }
+          return { ...ex, completed: false, logged_sets: null, set_drafts: drafts };
+        });
+      } else {
+        formattedExData = (exData || []).map(ex => {
+          const drafts = {};
+          const setsCount = parseInt(ex.sets) || 0;
+          for (let i = 0; i < setsCount; i++) {
+            drafts[i] = ex.logged_sets?.[i] || { reps: ex.reps, weight: ex.weight };
+          }
+          return { ...ex, set_drafts: drafts };
+        });
+      }
 
       setExercises(formattedExData);
     }
@@ -351,6 +375,9 @@ export default function Workouts({ session }) {
       .eq('id', id);
 
     if (!error) {
+      // Update template completed_at to prevent stale reset
+      await supabase.from('workouts').update({ completed_at: new Date().toISOString() }).eq('id', workoutId);
+      
       setExercises(exercises.map(ex =>
         ex.id === id ? { ...ex, ...payload } : ex
       ));
@@ -393,6 +420,7 @@ export default function Workouts({ session }) {
     }
 
     await supabase.from('exercises').update(payload).eq('id', exId);
+    await supabase.from('workouts').update({ completed_at: new Date().toISOString() }).eq('id', workoutId);
 
     setExercises(exercises.map(ex => {
       if (ex.id === exId) {
@@ -423,6 +451,9 @@ export default function Workouts({ session }) {
     if (field === 'weight') finalValue = parseFloat(value) || 0;
 
     await supabase.from('exercises').update({ [field]: finalValue }).eq('id', id);
+    if (workoutId) {
+      await supabase.from('workouts').update({ completed_at: new Date().toISOString() }).eq('id', workoutId);
+    }
   };
 
   const finishWorkout = async () => {
