@@ -279,7 +279,7 @@ export default function Calendar({ session }) {
   const getInitial = (name) => name ? name.charAt(0).toUpperCase() : '?';
 
   return (
-    <div className="flex-col gap-5 stagger-children" style={{ display: 'flex' }}>
+    <div className="flex-col gap-5" style={{ display: 'flex' }}>
       <header className="page-header">
         <h1 className="page-title">Consistency</h1>
         <p className="page-subtitle">Track your progress and build habits.</p>
@@ -522,6 +522,7 @@ export default function Calendar({ session }) {
                         <div className="flex items-center gap-1">
                           <input
                             type="number"
+                            inputMode="decimal"
                             step="0.5"
                             value={ex.weight}
                             onChange={e => handleLocalChange(ex.id, 'weight', e.target.value)}

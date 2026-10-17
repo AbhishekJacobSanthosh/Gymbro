@@ -1,9 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Save, LogOut, Loader2, Mail, Medal, Award, Snowflake } from 'lucide-react';
+import { Save, LogOut, Loader2, Mail, Medal, Award, Snowflake, Check, Plus } from 'lucide-react';
 import { useToast } from '../App';
 import { calculateStreak, getActiveTemplates, getRestDays, getLevelProgress } from '../lib/utils';
 import { confirmSignOut } from '../lib/offline';
+import { applyAccent, saveAccent, loadSavedAccent, normalizeHex, readableAccent } from '../lib/theme';
+
+// Quick picks: bright enough on black as they are
+const PRESETS = ['#ff7854', '#ff453a', '#ff9f0a', '#ffd60a', '#30d158', '#64d2ff', '#0a84ff', '#bf5af2'];
 
 let hasLoadedOnce = false;
 
@@ -14,11 +18,30 @@ export default function Profile({ session }) {
   const [displayName, setDisplayName] = useState('');
   const [level, setLevel] = useState(1);
   const [xp, setXp] = useState(0);
-  const [color, setColor] = useState('#ff7854');
+  const [color, setColor] = useState(loadSavedAccent);
+  const [hexDraft, setHexDraft] = useState(() => loadSavedAccent().toUpperCase());
   const [achievements, setAchievements] = useState([]);
   const [gracePeriodsRemaining, setGracePeriodsRemaining] = useState(3);
-  
-  const COLORS = ['#ff7854', '#4ade80', '#60a5fa', '#c084fc', '#facc15', '#f472b6', '#ef4444', '#14b8a6'];
+
+  // The whole app previews the colour while you pick; leaving without saving restores the saved one
+  useEffect(() => { applyAccent(color); }, [color]);
+  useEffect(() => () => { applyAccent(loadSavedAccent()); }, []);
+
+  const pickColor = (value) => {
+    const hex = normalizeHex(value);
+    if (!hex) return;
+    setColor(hex);
+    setHexDraft(hex.toUpperCase());
+  };
+
+  const handleHexChange = (value) => {
+    setHexDraft(value.toUpperCase());
+    const hex = normalizeHex(value);
+    if (hex) setColor(hex);
+  };
+
+  const readable = readableAccent(color);
+  const wasAdjusted = readable !== color;
 
   useEffect(() => {
     let ignore = false;
@@ -58,7 +81,7 @@ export default function Profile({ session }) {
           setDisplayName(data.display_name || '');
           setXp(data.xp || 0);
           setLevel(data.level || 1);
-          if (data.color) setColor(data.color);
+          if (data.color) pickColor(data.color);
         }
         if (achData) {
           setAchievements(achData);
@@ -85,13 +108,15 @@ export default function Profile({ session }) {
         .from('profiles')
         .update({
           display_name: displayName.trim() || null, // '' would clash with the UNIQUE constraint
-          color: color,
+          color: readable, // the adjusted colour, so it also reads well on everyone's calendar
           updated_at: new Date(),
         })
         .eq('id', user.id);
 
       if (error) throw error;
-      toast?.success('Profile updated successfully!');
+      saveAccent(readable);
+      pickColor(readable);
+      toast?.success('Profile saved');
     } catch (error) {
       toast?.error(error.message);
     } finally {
@@ -111,7 +136,7 @@ export default function Profile({ session }) {
   };
 
   return (
-    <div className="flex-col gap-5 stagger-children" style={{ display: 'flex' }}>
+    <div className="flex-col gap-5" style={{ display: 'flex' }}>
       <header className="page-header">
         <h1 className="page-title">Profile</h1>
         <p className="page-subtitle">Customize how you appear on the leaderboard and calendar.</p>
@@ -185,30 +210,66 @@ export default function Profile({ session }) {
             <p className="form-hint">This is how others will see you on the calendar and activity feed.</p>
           </div>
 
-          <div className="form-group">
-            <label className="form-label">Profile Color</label>
-            <div className="flex gap-2 flex-wrap">
-              {COLORS.map(c => (
+          <fieldset className="form-group accent-picker">
+            <legend className="form-label">Your colour</legend>
+            <div className="swatches">
+              {PRESETS.map(c => (
                 <button
                   key={c}
                   type="button"
-                  onClick={() => setColor(c)}
-                  style={{
-                    width: '36px',
-                    height: '36px',
-                    borderRadius: '50%',
-                    backgroundColor: c,
-                    border: color === c ? '2px solid white' : '2px solid transparent',
-                    outline: color === c ? `2px solid ${c}` : 'none',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                    padding: 0
-                  }}
+                  className={`swatch ${color === c ? 'selected' : ''}`}
+                  style={{ backgroundColor: c }}
+                  onClick={() => pickColor(c)}
+                  aria-label={`Use colour ${c}`}
+                  aria-pressed={color === c}
                 />
               ))}
+              {/* The phone's own colour picker: spectrum, sliders and eyedropper */}
+              <label
+                className={`swatch swatch-custom ${PRESETS.includes(color) ? '' : 'selected'}`}
+                style={PRESETS.includes(color) ? undefined : { backgroundColor: color }}
+              >
+                <input
+                  type="color"
+                  value={color}
+                  onChange={(e) => pickColor(e.target.value)}
+                  aria-label="Pick any colour"
+                />
+                {PRESETS.includes(color) && <Plus size={16} />}
+              </label>
             </div>
-            <p className="form-hint" style={{ marginTop: 'var(--space-2)' }}>This color represents you on the consistency calendar.</p>
-          </div>
+
+            <div className="accent-hex">
+              <label htmlFor="accent-hex" className="sr-only">Hex code</label>
+              <span className="accent-hex-dot" style={{ backgroundColor: readable }} />
+              <input
+                id="accent-hex"
+                type="text"
+                value={hexDraft}
+                onChange={(e) => handleHexChange(e.target.value)}
+                maxLength={7}
+                autoCapitalize="characters"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="#FF7854"
+                aria-invalid={!normalizeHex(hexDraft)}
+              />
+            </div>
+
+            <div className="accent-preview" aria-hidden="true">
+              <span className="accent-preview-check"><Check size={14} strokeWidth={3} /></span>
+              <span className="num accent-preview-set">82.5 kg × 8</span>
+              <span className="btn btn-primary btn-sm">Finish workout</span>
+            </div>
+
+            <p className="form-hint">
+              {!normalizeHex(hexDraft)
+                ? 'Enter a 6-digit hex code, like #3B82F6.'
+                : wasAdjusted
+                  ? `Lightened to ${readable.toUpperCase()} so it stays readable on black.`
+                  : 'Colours the whole app for you, and marks you on the calendar for everyone.'}
+            </p>
+          </fieldset>
 
           <button
             className="btn btn-primary"

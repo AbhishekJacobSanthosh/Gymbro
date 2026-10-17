@@ -1,56 +1,57 @@
 /* ============================================
-   GymBro Design System — World-Class Foundation
+   GymBro design tokens
+   True black (OLED) + graphite surfaces + one accent the user picks.
    ============================================ */
 
-/* ---- CSS Custom Properties (Design Tokens) ---- */
 :root {
-  /* Background Depth System */
-  --bg-base: #0a0a0f;
-  --bg-surface: #12121a;
-  --bg-elevated: #1a1a25;
-  --bg-overlay: #22222f;
-  --bg-hover: #2a2a38;
+  /* Surfaces: black page, graphite for grouped lists and the thing in focus */
+  --bg-base: #000000;
+  --bg-surface: #121212;
+  --bg-elevated: #1e1e1e;
+  --bg-overlay: #262626;
+  --bg-hover: #2c2c2c;
 
-  /* Accent — Warm Coral/Amber Gradient */
+  /* Accent: replaced at runtime by the user's colour (src/lib/theme.js). Flat, never a gradient. */
   --accent: #ff7854;
-  --accent-hover: #ff9474;
-  --accent-soft: rgba(255, 120, 84, 0.15);
+  --accent-hover: #ff8f70;
+  --accent-soft: rgba(255, 120, 84, 0.16);
   --accent-muted: rgba(255, 120, 84, 0.08);
-  --accent-gradient: linear-gradient(135deg, #ff7854 0%, #ffb347 100%);
-  --accent-glow: 0 0 20px rgba(255, 120, 84, 0.25);
+  --accent-contrast: #000000;
+  --accent-gradient: var(--accent);
 
-  /* Text Hierarchy */
-  --text-primary: #f0f0f5;
-  --text-secondary: #8e8ea0;
-  --text-tertiary: #5e5e70;
-  --text-quaternary: #3e3e50;
+  /* Text */
+  --text-primary: #f2f2f2;
+  --text-secondary: #9a9a9a;
+  --text-tertiary: #6b6b6b;
+  --text-quaternary: #3d3d3d;
 
-  /* Semantic Colors */
-  --success: #34d399;
-  --success-soft: rgba(52, 211, 153, 0.12);
-  --danger: #f87171;
-  --danger-soft: rgba(248, 113, 113, 0.12);
-  --warning: #fbbf24;
-  --warning-soft: rgba(251, 191, 36, 0.12);
+  /* Meaning stays fixed whatever the accent: green = done, red = delete */
+  --success: #30d158;
+  --success-soft: rgba(48, 209, 88, 0.14);
+  --danger: #ff453a;
+  --danger-soft: rgba(255, 69, 58, 0.14);
+  --error: var(--danger);
+  --warning: #ffd60a;
+  --warning-soft: rgba(255, 214, 10, 0.14);
 
-  /* Borders & Dividers */
-  --border: rgba(255, 255, 255, 0.06);
-  --border-hover: rgba(255, 255, 255, 0.12);
-  --border-focus: rgba(255, 120, 84, 0.4);
-  --divider: rgba(255, 255, 255, 0.04);
+  /* Lines */
+  --border: #222222;
+  --border-hover: #333333;
+  --border-focus: var(--accent);
+  --divider: #1c1c1c;
 
-  /* Shadows */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.25);
-  --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.35);
-  --shadow-glow: 0 0 30px rgba(255, 120, 84, 0.1);
+  /* Shadows: only for things that float (sheets, toasts) */
+  --shadow-sm: none;
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.7);
+  --shadow-glow: none;
 
-  /* Border Radius */
+  /* Radius follows importance: big for the thing in focus, small for controls */
   --radius-xs: 6px;
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 20px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
   --radius-full: 9999px;
 
   /* Spacing */
@@ -64,8 +65,9 @@
   --space-10: 2.5rem;
   --space-12: 3rem;
 
-  /* Typography */
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  /* Typography: Archivo at normal width for reading, condensed + heavy for numbers and titles */
+  --font-sans: 'Archivo', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --stretch-condensed: 72%;
   --font-display: 800;
   --font-heading: 700;
   --font-semibold: 600;
@@ -83,8 +85,8 @@
   --transition-slow: all var(--duration-slow) var(--ease-out);
 
   /* Layout */
-  --sidebar-width: 260px;
-  --mobile-nav-height: 80px;
+  --sidebar-width: 240px;
+  --mobile-nav-height: 64px;
   --content-max-width: 1040px;
 
   font-family: var(--font-sans);
@@ -111,9 +113,11 @@ html {
 body {
   background-color: var(--bg-base);
   color: var(--text-primary);
-  line-height: 1.6;
+  line-height: 1.5;
   font-size: 0.9375rem;
+  font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
 }
@@ -212,9 +216,15 @@ img {
 .text-label {
   font-size: 0.75rem;
   font-weight: var(--font-semibold);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
+}
+
+/* Numbers you read at arm's length: weights, reps, timer */
+.num {
+  font-stretch: var(--stretch-condensed);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
 }
 
 
@@ -227,7 +237,7 @@ img {
   padding: 0.625rem 1.125rem;
   border-radius: var(--radius-sm);
   font-weight: var(--font-semibold);
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   line-height: 1;
   transition: var(--transition-normal);
   white-space: nowrap;
@@ -247,23 +257,17 @@ img {
 }
 
 .btn-primary {
-  background: var(--accent-gradient);
-  color: #0a0a0f;
-  box-shadow: var(--shadow-sm), 0 0 20px rgba(255, 120, 84, 0.15);
+  background: var(--accent);
+  color: var(--accent-contrast);
 }
 
 .btn-primary:hover:not(:disabled) {
-  box-shadow: var(--shadow-md), 0 0 30px rgba(255, 120, 84, 0.25);
-  transform: translateY(-1px);
-}
-
-.btn-primary:active:not(:disabled) {
-  transform: translateY(0) scale(0.98);
+  background: var(--accent-hover);
 }
 
 .btn-secondary {
   background-color: var(--bg-elevated);
-  color: var(--text-secondary);
+  color: var(--text-primary);
   border: 1px solid var(--border);
 }
 
@@ -314,8 +318,8 @@ img {
 /* ---- Cards ---- */
 .card {
   background-color: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-lg);
   padding: var(--space-6);
   transition: var(--transition-normal);
   position: relative;
@@ -323,8 +327,6 @@ img {
 
 .card-hover:hover {
   border-color: var(--border-hover);
-  box-shadow: var(--shadow-md);
-  transform: translateY(-2px);
 }
 
 .card-glow {
@@ -367,7 +369,7 @@ textarea {
   background-color: var(--bg-elevated);
   color: var(--text-primary);
   font-family: inherit;
-  font-size: 0.9375rem;
+  font-size: 1rem; /* 16px minimum: smaller makes iPhone Safari zoom in on focus */
   transition: var(--transition-normal);
   outline: none;
 }
@@ -382,7 +384,7 @@ input:focus,
 select:focus,
 textarea:focus {
   border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px var(--accent-muted), inset 0 0 0 1px var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-muted);
   background-color: var(--bg-overlay);
 }
 
@@ -458,12 +460,10 @@ input[type="number"] {
 }
 
 .sidebar-brand-text {
-  font-size: 1.375rem;
+  font-size: 1.5rem;
   font-weight: var(--font-display);
-  background: var(--accent-gradient);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  font-stretch: var(--stretch-condensed);
+  color: var(--text-primary);
 }
 
 .sidebar-nav {
@@ -505,7 +505,7 @@ input[type="number"] {
   transform: translateY(-50%);
   width: 3px;
   height: 20px;
-  background: var(--accent-gradient);
+  background: var(--accent);
   border-radius: var(--radius-full);
 }
 
@@ -530,11 +530,12 @@ input[type="number"] {
 }
 
 .page-title {
-  font-size: 1.75rem;
+  font-size: 2.25rem;
   font-weight: var(--font-display);
+  font-stretch: var(--stretch-condensed);
   color: var(--text-primary);
-  letter-spacing: -0.03em;
-  line-height: 1.2;
+  letter-spacing: -0.01em;
+  line-height: 1.05;
 }
 
 .page-subtitle {
@@ -569,10 +570,11 @@ input[type="number"] {
 }
 
 .stat-value {
-  font-size: 1.5rem;
-  font-weight: var(--font-heading);
+  font-size: 1.75rem;
+  font-weight: var(--font-display);
+  font-stretch: var(--stretch-condensed);
   color: var(--text-primary);
-  letter-spacing: -0.02em;
+  line-height: 1.1;
 }
 
 .stat-icon {
@@ -602,32 +604,31 @@ input[type="number"] {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  min-height: 48px;
   border-radius: var(--radius-md);
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   font-weight: var(--font-medium);
   pointer-events: auto;
-  animation: toastIn var(--duration-slow) var(--ease-spring) forwards;
+  animation: toastIn var(--duration-normal) var(--ease-out) forwards;
   box-shadow: var(--shadow-lg);
   max-width: 380px;
-}
-
-.toast-success {
-  background-color: #0d2818;
-  border: 1px solid rgba(52, 211, 153, 0.2);
-  color: var(--success);
-}
-
-.toast-error {
-  background-color: #2d0f0f;
-  border: 1px solid rgba(248, 113, 113, 0.2);
-  color: var(--danger);
-}
-
-.toast-info {
-  background-color: var(--bg-elevated);
-  border: 1px solid var(--border);
+  background-color: var(--bg-overlay);
+  border: 1px solid var(--border-hover);
   color: var(--text-primary);
+}
+
+.toast svg { flex-shrink: 0; }
+.toast-success svg { color: var(--success); }
+.toast-error svg { color: var(--danger); }
+.toast-info svg { color: var(--accent); }
+
+.toast-action {
+  margin-left: auto;
+  padding: var(--space-2) var(--space-3);
+  color: var(--accent);
+  font-weight: var(--font-semibold);
+  border-radius: var(--radius-xs);
 }
 
 .toast-exit {
@@ -744,7 +745,7 @@ input[type="number"] {
 
 .progress-ring-fill {
   fill: none;
-  stroke: url(#accent-gradient);
+  stroke: var(--accent);
   stroke-linecap: round;
   transition: stroke-dashoffset 0.6s var(--ease-out);
 }
@@ -829,7 +830,7 @@ input[type="number"] {
   text-align: center;
   color: var(--text-primary);
   font-weight: var(--font-semibold);
-  font-size: 0.8125rem;
+  font-size: 1rem;
   transition: var(--transition-fast);
 }
 
@@ -857,8 +858,6 @@ input[type="number"] {
   border-radius: var(--radius-full);
   font-size: 0.6875rem;
   font-weight: var(--font-semibold);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .badge-accent {
@@ -971,30 +970,13 @@ input[type="number"] {
 }
 
 @keyframes toastIn {
-  from {
-    opacity: 0;
-    transform: translateX(20px) scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0) scale(1);
-  }
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes toastOut {
-  from {
-    opacity: 1;
-    transform: translateX(0) scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: translateX(20px) scale(0.95);
-  }
-}
-
-@keyframes pulseGlow {
-  0%, 100% { box-shadow: 0 0 20px rgba(255, 120, 84, 0.15); }
-  50% { box-shadow: 0 0 30px rgba(255, 120, 84, 0.3); }
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(12px); }
 }
 
 @keyframes spin {
@@ -1050,20 +1032,6 @@ input[type="number"] {
   animation: pulse 2s ease-in-out infinite;
 }
 
-/* Staggered children animation */
-.stagger-children > * {
-  animation: fadeInUp var(--duration-slow) var(--ease-out) both;
-}
-.stagger-children > *:nth-child(1) { animation-delay: 0ms; }
-.stagger-children > *:nth-child(2) { animation-delay: 60ms; }
-.stagger-children > *:nth-child(3) { animation-delay: 120ms; }
-.stagger-children > *:nth-child(4) { animation-delay: 180ms; }
-.stagger-children > *:nth-child(5) { animation-delay: 240ms; }
-.stagger-children > *:nth-child(6) { animation-delay: 300ms; }
-.stagger-children > *:nth-child(7) { animation-delay: 360ms; }
-.stagger-children > *:nth-child(8) { animation-delay: 420ms; }
-.stagger-children > *:nth-child(9) { animation-delay: 480ms; }
-.stagger-children > *:nth-child(10) { animation-delay: 540ms; }
 
 
 /* ---- Login Styles ---- */
@@ -1095,9 +1063,9 @@ input[type="number"] {
   inset: 0;
   background: linear-gradient(
     160deg,
-    rgba(10, 10, 15, 0.85) 0%,
-    rgba(255, 120, 84, 0.08) 50%,
-    rgba(10, 10, 15, 0.7) 100%
+    rgba(0, 0, 0, 0.85) 0%,
+    rgba(0, 0, 0, 0.45) 50%,
+    rgba(0, 0, 0, 0.8) 100%
   );
 }
 
@@ -1112,6 +1080,7 @@ input[type="number"] {
 .login-hero-title {
   font-size: 3rem;
   font-weight: var(--font-display);
+  font-stretch: var(--stretch-condensed);
   color: #fff;
   margin-bottom: var(--space-4);
   text-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
@@ -1173,12 +1142,10 @@ input[type="number"] {
 }
 
 .login-brand-text {
-  font-size: 1.75rem;
+  font-size: 2rem;
   font-weight: var(--font-display);
-  background: var(--accent-gradient);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  font-stretch: var(--stretch-condensed);
+  color: var(--text-primary);
 }
 
 .login-welcome {
@@ -1277,8 +1244,8 @@ input[type="number"] {
 /* ---- Calendar Styles ---- */
 .calendar-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 6px;
+  grid-template-columns: repeat(7, minmax(0, 1fr)); /* 7 columns always fit, even on small phones */
+  gap: 4px;
   text-align: center;
 }
 
@@ -1286,8 +1253,6 @@ input[type="number"] {
   font-size: 0.75rem;
   font-weight: var(--font-semibold);
   color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   padding-bottom: var(--space-3);
 }
 
@@ -1451,11 +1416,9 @@ input[type="number"] {
 }
 
 .weekly-day-label {
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   font-weight: var(--font-semibold);
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  color: var(--text-secondary);
 }
 
 .weekly-day-value {
@@ -1572,16 +1535,16 @@ input[type="number"] {
     height: auto;
     min-height: var(--mobile-nav-height);
     border-right: none;
-    border-top: 1px solid var(--border);
-    padding: var(--space-2) 0;
-    padding-bottom: max(var(--space-2), env(safe-area-inset-bottom));
+    border-top: 1px solid var(--divider);
+    padding: var(--space-1) 0;
+    padding-bottom: max(var(--space-1), env(safe-area-inset-bottom));
     flex-direction: row;
     justify-content: space-around;
     align-items: center;
     z-index: 100;
-    background: rgba(10, 10, 15, 0.85);
-    backdrop-filter: blur(24px) saturate(180%);
-    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    background: rgba(0, 0, 0, 0.82);
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
   }
 
   .sidebar-brand {
@@ -1602,11 +1565,12 @@ input[type="number"] {
 
   .nav-item {
     flex-direction: column;
-    gap: 2px;
-    padding: var(--space-2) var(--space-3);
-    font-size: 0.625rem;
+    gap: 3px;
+    padding: var(--space-2) var(--space-2);
+    font-size: 0.6875rem;
     color: var(--text-tertiary);
-    min-width: 52px;
+    min-width: 56px;
+    min-height: 48px;
     text-align: center;
     justify-content: center;
   }
@@ -1639,7 +1603,7 @@ input[type="number"] {
     transform: translateX(-50%);
     width: 20px;
     height: 3px;
-    background: var(--accent-gradient);
+    background: var(--accent);
     border-radius: var(--radius-full);
   }
 
@@ -1660,7 +1624,24 @@ input[type="number"] {
   }
 
   .page-title {
-    font-size: 1.5rem;
+    font-size: 2rem;
+  }
+
+  /* Toasts sit just above the tab bar, where your thumb is */
+  .toast-container {
+    top: auto;
+    right: var(--space-4);
+    left: var(--space-4);
+    bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom) + var(--space-3));
+    align-items: stretch;
+  }
+
+  .toast {
+    max-width: none;
+  }
+
+  .card {
+    padding: var(--space-5);
   }
 
   /* Cards — optional full-bleed */
@@ -1741,15 +1722,14 @@ input[type="number"] {
   }
 
   .calendar-day {
-    min-height: 44px;
-    font-size: 0.8125rem;
+    font-size: 0.9375rem;
   }
 
   /* Exercise cards */
   .exercise-inline-input {
-    width: 48px;
-    font-size: 0.875rem;
-    min-height: 32px;
+    width: 52px;
+    font-size: 1rem;
+    min-height: 36px;
   }
 
   /* Weekly strip */
@@ -1777,8 +1757,7 @@ input[type="number"] {
   }
 
   .card-hover:hover {
-    transform: translateY(-3px);
-    box-shadow: var(--shadow-lg), var(--shadow-glow);
+    border-color: var(--border-hover);
   }
 }
 

@@ -54,12 +54,6 @@ function ProgressRing({ completed, total, size = 100, strokeWidth = 6 }) {
   return (
     <div className="relative" style={{ width: size, height: size }}>
       <svg className="progress-ring" width={size} height={size}>
-        <defs>
-          <linearGradient id="accent-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#ff7854" />
-            <stop offset="100%" stopColor="#ffb347" />
-          </linearGradient>
-        </defs>
         <circle
           className="progress-ring-bg"
           cx={size / 2}
@@ -388,14 +382,14 @@ export default function Workouts({ session }) {
   const startedEarlierDay = workout.startedAt && !isSameDay(workout.startedAt, new Date());
 
   return (
-    <div className="flex-col gap-5 stagger-children" style={{ display: 'flex', position: 'relative' }}>
+    <div className="flex-col gap-5" style={{ display: 'flex', position: 'relative' }}>
 
       {showConfetti && (
         <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.8)' }}>
           <div className="card" style={{ textAlign: 'center', animation: 'scaleIn 0.3s ease-out' }}>
             <Trophy size={64} style={{ color: '#ffd700', margin: '0 auto var(--space-4)' }} />
             <h2 style={{ fontSize: '2rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 'var(--space-2)' }}>
-              {prMessages.length > 0 ? 'NEW PR!' : 'BADGE UNLOCKED!'}
+              {prMessages.length > 0 ? 'New PR' : 'Badge unlocked'}
             </h2>
             <p style={{ color: 'var(--text-secondary)', fontSize: '1.125rem' }}>
               {prMessages.map(pr => `${pr.name}: ${pr.weight}kg`).join(' • ')}
@@ -577,6 +571,7 @@ export default function Workouts({ session }) {
                                 <div className="flex items-center gap-1">
                                   <input
                                     type="number"
+                                    inputMode="decimal"
                                     step="0.5"
                                     value={ex.weight}
                                     onChange={e => handleLocalChange(ex.key, 'weight', e.target.value)}
@@ -603,7 +598,7 @@ export default function Workouts({ session }) {
                                   gap: '4px',
                                   padding: '4px 8px',
                                   borderRadius: 'var(--radius-sm)',
-                                  backgroundColor: ex.is_tracking_sets ? 'rgba(255, 120, 84, 0.1)' : 'var(--bg-elevated)',
+                                  backgroundColor: ex.is_tracking_sets ? 'var(--accent-muted)' : 'var(--bg-elevated)',
                                   transition: 'all 0.2s'
                                 }}
                               >
@@ -632,7 +627,7 @@ export default function Workouts({ session }) {
                                     transition: 'all 0.2s'
                                   }}>
                                     <div style={{ fontWeight: 600, fontSize: '0.75rem', color: 'var(--text-tertiary)', width: '40px' }}>
-                                      SET {i + 1}
+                                      Set {i + 1}
                                     </div>
 
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -652,6 +647,7 @@ export default function Workouts({ session }) {
                                       <div className="flex items-center gap-1">
                                         <input
                                           type="number"
+                                          inputMode="decimal"
                                           step="0.5"
                                           value={isSetCompleted ? (ex.logged_sets[i].weight) : draft.weight}
                                           onChange={e => handleSetDraftChange(ex.key, i, 'weight', e.target.value)}
@@ -675,7 +671,7 @@ export default function Workouts({ session }) {
                                         alignItems: 'center',
                                         justifyContent: 'center',
                                         backgroundColor: isSetCompleted ? 'var(--accent)' : 'transparent',
-                                        color: isSetCompleted ? 'var(--bg-surface)' : 'var(--text-tertiary)',
+                                        color: isSetCompleted ? 'var(--accent-contrast)' : 'var(--text-tertiary)',
                                         border: `2px solid ${isSetCompleted ? 'var(--accent)' : 'var(--border)'}`,
                                         cursor: 'pointer',
                                         transition: 'all 0.2s',
@@ -717,6 +713,7 @@ export default function Workouts({ session }) {
                     <div style={{ flex: '0 1 72px' }}>
                       <input
                         type="number"
+                        inputMode="numeric"
                         min="0"
                         placeholder="Sets"
                         value={newExercise.sets}
@@ -738,6 +735,7 @@ export default function Workouts({ session }) {
                     <div style={{ flex: '0 1 72px' }}>
                       <input
                         type="number"
+                        inputMode="decimal"
                         step="0.5"
                         placeholder="kg"
                         value={newExercise.weight}
@@ -749,6 +747,7 @@ export default function Workouts({ session }) {
                     <div style={{ flex: '0 1 72px' }}>
                       <input
                         type="number"
+                        inputMode="numeric"
                         placeholder="Mins"
                         value={newExercise.minutes}
                         onChange={e => setNewExercise({ ...newExercise, minutes: e.target.value })}

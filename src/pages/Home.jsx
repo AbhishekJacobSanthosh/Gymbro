@@ -378,7 +378,7 @@ export default function Home({ session }) {
   const greeting = getGreeting();
 
   return (
-    <div className="flex-col gap-6 stagger-children" style={{ display: 'flex' }}>
+    <div className="flex-col gap-6" style={{ display: 'flex' }}>
       {/* Header */}
       <header className="page-header flex justify-between items-center">
         <div>
@@ -448,6 +448,7 @@ export default function Home({ session }) {
           <form onSubmit={handleWeightSubmit} className="flex gap-2 mb-5">
             <input
               type="number"
+              inputMode="decimal"
               step="0.1"
               min="0.1"
               placeholder="Current weight (kg/lbs)"
@@ -464,12 +465,8 @@ export default function Home({ session }) {
                 <AreaChart data={weightData}>
                   <defs>
                     <linearGradient id="weightGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.25} />
-                      <stop offset="100%" stopColor="var(--accent)" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="lineGradient" x1="0" y1="0" x2="1" y2="0">
-                      <stop offset="0%" stopColor="#ff7854" />
-                      <stop offset="100%" stopColor="#ffb347" />
+                      <stop offset="0%" style={{ stopColor: 'var(--accent)', stopOpacity: 0.25 }} />
+                      <stop offset="100%" style={{ stopColor: 'var(--accent)', stopOpacity: 0 }} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
@@ -488,7 +485,7 @@ export default function Home({ session }) {
                   <Area
                     type="monotone"
                     dataKey="weight"
-                    stroke="url(#lineGradient)"
+                    stroke="var(--accent)"
                     strokeWidth={2.5}
                     fill="url(#weightGradient)"
                     dot={{ r: 3, fill: 'var(--accent)', stroke: 'var(--bg-surface)', strokeWidth: 2 }}

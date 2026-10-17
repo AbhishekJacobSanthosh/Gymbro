@@ -4,7 +4,6 @@
 
 /* Page transition wrapper */
 .page-transition {
-  animation: fadeInUp var(--duration-slow) var(--ease-out) both;
   width: 100%;
   max-width: var(--content-max-width);
 }
@@ -110,6 +109,7 @@
 
 /* Profile avatar */
 .profile-avatar {
+  isolation: isolate; /* keeps the coloured ring above the card behind it */
   width: 72px;
   height: 72px;
   border-radius: var(--radius-full);
@@ -128,7 +128,7 @@
   position: absolute;
   inset: -2px;
   border-radius: var(--radius-full);
-  background: var(--accent-gradient);
+  background: var(--accent);
   z-index: -1;
 }
 
@@ -170,8 +170,6 @@
   font-size: 0.6875rem;
   font-weight: var(--font-semibold);
   color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
 /* Template exercise grid row */
@@ -190,7 +188,7 @@
 
 /* Rest day illustration */
 .rest-day-card {
-  background: linear-gradient(135deg, var(--bg-surface) 0%, var(--bg-elevated) 100%);
+  background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: var(--space-12) var(--space-6);
@@ -213,8 +211,9 @@
 }
 
 .progress-label-count {
-  font-size: 1.5rem;
+  font-size: 1.75rem;
   font-weight: var(--font-display);
+  font-stretch: var(--stretch-condensed);
   color: var(--text-primary);
   line-height: 1;
 }
@@ -224,8 +223,6 @@
   font-weight: var(--font-medium);
   color: var(--text-tertiary);
   margin-top: var(--space-1);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
 /* Finish workout CTA */
@@ -234,6 +231,117 @@
   overflow: hidden;
 }
 
-.finish-cta.ready {
-  animation: pulseGlow 2s ease-in-out infinite;
+
+/* ---- Accent colour picker (Profile) ---- */
+.accent-picker {
+  border: none;
+  gap: var(--space-3);
+  min-width: 0; /* fieldsets otherwise grow to their widest child instead of wrapping */
+}
+
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.swatch {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.swatch.selected {
+  box-shadow: 0 0 0 2px var(--bg-surface), 0 0 0 4px var(--text-primary);
+}
+
+/* A spectrum here means "any colour", not decoration */
+.swatch-custom {
+  background: conic-gradient(#ff453a, #ffd60a, #30d158, #64d2ff, #0a84ff, #bf5af2, #ff453a);
+  color: #000;
+}
+
+.swatch-custom svg {
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: var(--radius-full);
+  padding: 2px;
+}
+
+/* The real colour input covers the swatch so a tap opens the phone's own picker */
+.swatch-custom input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  padding: 0;
+  border: none;
+  cursor: pointer;
+}
+
+.accent-hex {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: 220px;
+  position: relative;
+}
+
+.accent-hex-dot {
+  position: absolute;
+  left: var(--space-3);
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-full);
+  pointer-events: none;
+}
+
+.accent-hex input {
+  padding-left: 2.5rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+.accent-hex input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.accent-preview {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-elevated);
+  border-radius: var(--radius-md);
+  max-width: 420px;
+}
+
+.accent-preview-check {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.accent-preview-set {
+  font-size: 1.125rem;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.accent-preview .btn {
+  pointer-events: none;
 }

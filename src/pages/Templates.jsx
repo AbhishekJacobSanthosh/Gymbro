@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Trash2, Dumbbell, Coffee, Edit3, Save, Loader2, GripVertical } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useToast } from '../App';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const SHORT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -12,8 +13,12 @@ export default function Templates({ session }) {
   const [exercises, setExercises] = useState([]);
   const [loading, setLoading] = useState(!hasLoadedOnce);
 
+  const toast = useToast();
+
   // Template State
   const [templateId, setTemplateId] = useState(null);
+  const currentTemplateRef = useRef(null);
+  useEffect(() => { currentTemplateRef.current = templateId; }, [templateId]);
   const [routineName, setRoutineName] = useState('Workout');
   const [isRestDay, setIsRestDay] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
@@ -190,15 +195,36 @@ export default function Templates({ session }) {
     await supabase.from('exercises').update({ [field]: finalValue }).eq('id', id);
   };
 
-  const removeExercise = async (id) => {
-    const { error } = await supabase
-      .from('exercises')
-      .delete()
-      .eq('id', id);
+  // Removed from the list right away, deleted for real only if Undo isn't tapped within 5s
+  const removeExercise = (id) => {
+    const index = exercises.findIndex(ex => ex.id === id);
+    if (index === -1) return;
+    const removed = exercises[index];
+    const fromTemplate = templateId;
+    // Put it back only if the same day is still on screen; other days reload from the database
+    const restore = () => setExercises(prev =>
+      currentTemplateRef.current !== fromTemplate || prev.some(ex => ex.id === id)
+        ? prev
+        : [...prev.slice(0, index), removed, ...prev.slice(index)]
+    );
 
-    if (!error) {
-      setExercises(exercises.filter(ex => ex.id !== id));
-    }
+    setExercises(prev => prev.filter(ex => ex.id !== id));
+
+    const timer = setTimeout(async () => {
+      const { error } = await supabase.from('exercises').delete().eq('id', id);
+      if (error) {
+        restore();
+        toast?.error(`Couldn't remove ${removed.name}. Check your connection.`);
+      }
+    }, 5000);
+
+    toast?.action(`Removed ${removed.name}`, {
+      label: 'Undo',
+      onAction: () => {
+        clearTimeout(timer);
+        restore();
+      },
+    });
   };
 
   const handleDragStart = (e, index) => {
@@ -271,7 +297,7 @@ export default function Templates({ session }) {
   const todayIndex = new Date().getDay();
 
   return (
-    <div className="flex-col gap-5 stagger-children" style={{ display: 'flex' }}>
+    <div className="flex-col gap-5" style={{ display: 'flex' }}>
       <header className="page-header">
         <h1 className="page-title">Planner</h1>
         <p className="page-subtitle">Build your weekly templates and edit exercises.</p>
@@ -437,6 +463,7 @@ export default function Templates({ session }) {
                               />
                               <input
                                 type="number"
+                                inputMode="numeric"
                                 value={ex.sets}
                                 onChange={e => handleLocalChange(ex.id, 'sets', e.target.value)}
                                 onBlur={e => handleBlurSave(ex.id, 'sets', e.target.value)}
@@ -453,6 +480,7 @@ export default function Templates({ session }) {
                               />
                               <input
                                 type="number"
+                                inputMode="decimal"
                                 step="0.5"
                                 value={ex.weight}
                                 onChange={e => handleLocalChange(ex.id, 'weight', e.target.value)}
@@ -462,6 +490,7 @@ export default function Templates({ session }) {
                               />
                               <input
                                 type="number"
+                                inputMode="numeric"
                                 value={ex.minutes || ''}
                                 onChange={e => handleLocalChange(ex.id, 'minutes', e.target.value)}
                                 onBlur={e => handleBlurSave(ex.id, 'minutes', e.target.value)}
@@ -470,6 +499,7 @@ export default function Templates({ session }) {
                               />
                               <button
                                 onClick={() => removeExercise(ex.id)}
+                                aria-label={`Remove ${ex.name}`}
                                 className="btn-icon btn-danger"
                                 style={{ width: '36px', height: '36px', flexShrink: 0, cursor: 'pointer' }}
                               >
@@ -501,6 +531,7 @@ export default function Templates({ session }) {
                         <div style={{ flex: '0 1 72px' }}>
                           <input
                             type="number"
+                            inputMode="numeric"
                             min="0"
                             placeholder="Sets"
                             value={newExercise.sets}
@@ -518,6 +549,7 @@ export default function Templates({ session }) {
                         <div style={{ flex: '0 1 72px' }}>
                           <input
                             type="number"
+                            inputMode="decimal"
                             step="0.5"
                             placeholder="kg"
                             value={newExercise.weight}
@@ -527,6 +559,7 @@ export default function Templates({ session }) {
                         <div style={{ flex: '0 1 72px' }}>
                           <input
                             type="number"
+                            inputMode="numeric"
                             placeholder="Mins"
                             value={newExercise.minutes}
                             onChange={e => setNewExercise({ ...newExercise, minutes: e.target.value })}

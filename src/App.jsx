@@ -4,6 +4,7 @@ import { Home, Dumbbell, Calendar as CalendarIcon, LogOut, ClipboardList, User, 
 import { isAuthRetryableFetchError } from '@supabase/supabase-js';
 import { supabase } from './lib/supabase';
 import { getQueued, getFailed, flushOutbox, retryFailed, confirmSignOut } from './lib/offline';
+import { saveAccent, DEFAULT_ACCENT } from './lib/theme';
 import './App.css';
 
 // Pages
@@ -24,23 +25,26 @@ export function useToast() {
 function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
 
-  const addToast = useCallback((message, type = 'info', duration = 3500) => {
-    const id = Date.now() + Math.random();
-    setToasts(prev => [...prev, { id, message, type, exiting: false }]);
-
+  const dismissToast = useCallback((id) => {
+    setToasts(prev => prev.map(t => t.id === id ? { ...t, exiting: true } : t));
     setTimeout(() => {
-      setToasts(prev => prev.map(t => t.id === id ? { ...t, exiting: true } : t));
-      setTimeout(() => {
-        setToasts(prev => prev.filter(t => t.id !== id));
-      }, 250);
-    }, duration);
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 250);
   }, []);
 
+  const addToast = useCallback((message, type = 'info', duration = 3500, action = null) => {
+    const id = Date.now() + Math.random();
+    setToasts(prev => [...prev, { id, message, type, action, exiting: false }]);
+    setTimeout(() => dismissToast(id), duration);
+  }, [dismissToast]);
+
   // Make toast callable as toast.success(), etc.
+  // toast.action(msg, { label, onAction, duration }) shows a button, e.g. Undo.
   const toastApi = useMemo(() => ({
     success: (msg) => addToast(msg, 'success'),
     error: (msg) => addToast(msg, 'error'),
     info: (msg) => addToast(msg, 'info'),
+    action: (msg, { label, onAction, duration = 5000 }) => addToast(msg, 'info', duration, { label, onAction }),
   }), [addToast]);
 
   const icons = {
@@ -52,11 +56,22 @@ function ToastProvider({ children }) {
   return (
     <ToastContext.Provider value={toastApi}>
       {children}
-      <div className="toast-container">
+      <div className="toast-container" role="status" aria-live="polite">
         {toasts.map(t => (
           <div key={t.id} className={`toast toast-${t.type} ${t.exiting ? 'toast-exit' : ''}`}>
             {icons[t.type]}
             <span>{t.message}</span>
+            {t.action && (
+              <button
+                className="toast-action"
+                onClick={() => {
+                  t.action.onAction();
+                  dismissToast(t.id);
+                }}
+              >
+                {t.action.label}
+              </button>
+            )}
           </div>
         ))}
       </div>
@@ -249,6 +264,7 @@ function App() {
       } else if (event === 'SIGNED_OUT') {
         setSession(null);
         writeLastUser(null);
+        saveAccent(DEFAULT_ACCENT);
       }
     });
 
@@ -262,6 +278,15 @@ function App() {
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, []);
+
+  // The user's profile colour is their accent; follow it if it was changed on another device
+  const userId = session?.user?.id;
+  const isOffline = !!session?.offline;
+  useEffect(() => {
+    if (!userId || isOffline) return;
+    supabase.from('profiles').select('color').eq('id', userId).single()
+      .then(({ data }) => { if (data) saveAccent(data.color || DEFAULT_ACCENT); });
+  }, [userId, isOffline]);
 
   const handleLogout = async () => {
     if (!confirmSignOut(session.user.id)) return;
