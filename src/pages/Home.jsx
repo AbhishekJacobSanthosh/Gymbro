@@ -129,7 +129,7 @@ export default function Home({ session }) {
   const [weight, setWeight] = useState('');
   const [weightData, setWeightData] = useState([]);
   const [activities, setActivities] = useState([]);
-  const [stats, setStats] = useState({ totalWorkouts: 0, currentStreak: 0, weeklyGoal: '0 / 0' });
+  const [stats, setStats] = useState({ totalWorkouts: 0, currentStreak: 0, plannedDays: 0 });
   const [displayName, setDisplayName] = useState('');
   const [level, setLevel] = useState(1);
   const [xp, setXp] = useState(0);
@@ -232,7 +232,6 @@ export default function Home({ session }) {
 
     let streak = 0;
     let totalWorkouts = 0;
-    let completedThisWeek = 0;
     let goal = 0;
 
     if (allWorkouts && allWorkouts.length > 0) {
@@ -250,15 +249,6 @@ export default function Home({ session }) {
 
       totalWorkouts = completedHistory.length;
 
-      // 3. Calculate this week's progress (starting Sunday to match planner)
-      const today = new Date();
-      const currentDay = today.getDay(); // 0 is Sunday
-      const startOfWeek = new Date(today);
-      startOfWeek.setDate(today.getDate() - currentDay);
-      startOfWeek.setHours(0, 0, 0, 0);
-
-      completedThisWeek = completedHistory.filter(w => new Date(w.completed_at) >= startOfWeek).length;
-      
       const todayStartCheck = new Date();
       todayStartCheck.setHours(0, 0, 0, 0);
       // Also counts a workout finished offline that hasn't synced yet
@@ -299,7 +289,7 @@ export default function Home({ session }) {
       ...prev,
       totalWorkouts,
       currentStreak: streak,
-      weeklyGoal: `${completedThisWeek} / ${goal || 0}`
+      plannedDays: goal
     }));
 
     // 6. Fetch 1RMs
@@ -364,6 +354,7 @@ export default function Home({ session }) {
   const weightChange = latestWeight != null && firstWeight != null && weightData.length > 1
     ? Math.round((latestWeight - firstWeight) * 10) / 10
     : null;
+  const trainedDays = week.filter(d => d.trained).length;
   const dayStatus = (d) => d.trained ? 'trained' : d.rest ? 'rest day' : d.planned ? 'planned' : 'nothing planned';
 
   return (
@@ -403,7 +394,9 @@ export default function Home({ session }) {
           </div>
           <div>
             <dt>This week</dt>
-            <dd className="num">{stats.weeklyGoal.replace(' / ', ' of ')}</dd>
+            {/* Days trained, the same days the strip above ticks; extra days beyond the plan just count up */}
+            <dd className="num">{trainedDays} {trainedDays === 1 ? 'day' : 'days'}</dd>
+            {stats.plannedDays > 0 && <dd className="week-stats-note">{stats.plannedDays} planned</dd>}
           </div>
           <div>
             <dt>Shields left</dt>
