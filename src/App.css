@@ -348,6 +348,18 @@
   color: var(--text-primary);
 }
 
+.today-notice-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  padding-bottom: var(--space-1);
+}
+
+.today-notice-action .text-button {
+  padding-left: 0;
+}
+
 /* ---- Exercises: one open card, the rest as plain rows ---- */
 .exercise-list {
   display: flex;

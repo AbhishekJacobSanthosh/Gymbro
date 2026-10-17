@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateStreak, calculateVolume, parseReps, getActiveTemplates, getRestDays, getLevelProgress, workoutCompletedAt, lastPerformanceByName, plannedSetDrafts, formatSet, buildWeek } from './utils.js';
+import { calculateStreak, calculateVolume, parseReps, getActiveTemplates, getRestDays, getLevelProgress, workoutCompletedAt, lastPerformanceByName, plannedSetDrafts, formatSet, buildWeek, storedSessionStatus, untickSession } from './utils.js';
 
 // Fixed "today": Saturday 17 Oct 2026, noon local time
 beforeEach(() => mock.timers.enable({ apis: ['Date'], now: new Date(2026, 9, 17, 12) }));
@@ -137,4 +137,53 @@ test('week strip: Sunday to Saturday with trained, planned and rest days', () =>
   assert.deepEqual(week.filter(d => d.planned).map(d => d.name), ['Monday']);
   assert.deepEqual(week.filter(d => d.rest).map(d => d.name), ['Wednesday']);
   assert.equal(week.find(d => d.isToday).name, 'Saturday');
+});
+
+test('a started workout follows plan changes until something is logged', () => {
+  const today = new Date(2026, 9, 17, 12).toISOString();
+  const yesterday = new Date(2026, 9, 16, 18).toISOString();
+  const session = (templateId, logged, startedAt = today) => ({
+    templateId, startedAt,
+    exercises: [{ completed: false, logged_sets: logged ? { 0: { reps: '10', weight: 80 } } : null }],
+  });
+  const push = { id: 7, is_rest_day: false };
+  const restDay = { id: 7, is_rest_day: true };
+
+  // Nothing logged: plan still the same -> keep; marked rest day / replaced / removed -> drop
+  assert.deepEqual(storedSessionStatus(session(7, false), push), { keep: true, planChanged: false });
+  assert.deepEqual(storedSessionStatus(session(7, false), restDay), { keep: false, planChanged: false });
+  assert.deepEqual(storedSessionStatus(session(7, false), { id: 8, is_rest_day: false }), { keep: false, planChanged: false });
+  assert.deepEqual(storedSessionStatus(session(7, false), undefined), { keep: false, planChanged: false });
+
+  // Sets logged: always kept, flagged when today's plan changed underneath it
+  assert.deepEqual(storedSessionStatus(session(7, true), push), { keep: true, planChanged: false });
+  assert.deepEqual(storedSessionStatus(session(7, true), restDay), { keep: true, planChanged: true });
+
+  // Spontaneous: kept for its day regardless of the plan; dropped the next day if nothing logged
+  assert.deepEqual(storedSessionStatus(session(null, false), restDay), { keep: true, planChanged: false });
+  assert.deepEqual(storedSessionStatus(session(null, false, yesterday), push), { keep: false, planChanged: false });
+
+  // Yesterday's workout with sets logged stays (finish saves it to yesterday), no plan-change flag
+  assert.deepEqual(storedSessionStatus(session(7, true, yesterday), restDay), { keep: true, planChanged: false });
+  assert.deepEqual(storedSessionStatus(null, push), { keep: false, planChanged: false });
+
+  // Plan not loaded on this phone yet: never drop a started workout on a guess
+  assert.deepEqual(storedSessionStatus(session(7, false), undefined, new Date(2026, 9, 17, 12), false), { keep: true, planChanged: false });
+});
+
+test('undo brings the workout back unticked, keeping the numbers entered', () => {
+  const finished = {
+    templateId: 7, startedAt: '2026-10-17T08:00:00.000Z', lastActivityAt: '2026-10-17T09:00:00.000Z',
+    exercises: [
+      { name: 'Bench press', sets: 2, completed: true, logged_sets: { 0: { reps: '10', weight: 80 }, 1: { reps: '8', weight: 82.5 } },
+        set_drafts: { 0: { reps: '8-12', weight: 80 }, 1: { reps: '8-12', weight: 80 } } },
+      { name: 'Treadmill', sets: 0, completed: true, logged_sets: null, set_drafts: {} },
+    ],
+  };
+  const now = new Date('2026-10-17T10:00:00.000Z');
+  const back = untickSession(finished, now);
+  assert.equal(back.exercises.every(ex => !ex.completed && ex.logged_sets === null), true);
+  assert.deepEqual(back.exercises[0].set_drafts, { 0: { reps: '10', weight: 80 }, 1: { reps: '8', weight: 82.5 } });
+  assert.equal(back.startedAt, now.toISOString());
+  assert.equal(back.templateId, 7);
 });

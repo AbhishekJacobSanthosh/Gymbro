@@ -100,6 +100,40 @@ export function formatSet(set) {
   return weight > 0 ? `${weight} × ${set.reps}` : `${set.reps}`;
 }
 
+// After Undo: the same exercises, nothing ticked. What you entered for each set stays in its boxes,
+// and the workout counts as started again from now.
+export function untickSession(session, now = new Date()) {
+  const at = now.toISOString();
+  return {
+    ...session,
+    startedAt: at,
+    lastActivityAt: at,
+    exercises: session.exercises.map(ex => {
+      const drafts = { ...(ex.set_drafts || {}) };
+      Object.entries(ex.logged_sets || {}).forEach(([i, set]) => { drafts[i] = { reps: set.reps, weight: set.weight }; });
+      return { ...ex, completed: false, logged_sets: null, set_drafts: drafts };
+    }),
+  };
+}
+
+// Whether a workout saved on the phone still applies when the Today page opens.
+// - Anything logged: always kept (never lose sets); planChanged flags a plan edited since it was started today.
+// - Nothing logged, from a plan: kept only if today's plan is still that same training day, so Planner
+//   changes (rest day, a different plan) show up.
+// - Nothing logged, spontaneous: kept for the day it was started.
+// planKnown: false before the plan has ever been loaded on this phone; then nothing is dropped.
+export function storedSessionStatus(stored, todaysTemplate, now = new Date(), planKnown = true) {
+  if (!stored) return { keep: false, planChanged: false };
+  if (!planKnown) return { keep: true, planChanged: false };
+  const progress = stored.exercises.some(ex => ex.completed || Object.keys(ex.logged_sets || {}).length > 0);
+  const startedToday = new Date(stored.startedAt).toDateString() === now.toDateString();
+  const planStillMatches = !!todaysTemplate && !todaysTemplate.is_rest_day && todaysTemplate.id === stored.templateId;
+
+  if (progress) return { keep: true, planChanged: startedToday && stored.templateId !== null && !planStillMatches };
+  if (stored.templateId === null) return { keep: startedToday, planChanged: false };
+  return { keep: startedToday && planStillMatches, planChanged: false };
+}
+
 // This week (Sunday first, like the Planner) for the dashboard strip.
 // trained: a workout was finished that day; planned: a template with exercises; rest: a rest-day template.
 export function buildWeek(completedDates, templatesByDay, today = new Date()) {

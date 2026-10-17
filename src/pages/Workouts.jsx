@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Check, Coffee, Loader2, Trophy, Undo2, Plus, Minus, ChevronDown, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../App';
-import { getActiveTemplates, workoutCompletedAt, lastPerformanceByName, plannedSetDrafts, formatSet } from '../lib/utils';
+import { getActiveTemplates, workoutCompletedAt, lastPerformanceByName, plannedSetDrafts, formatSet, storedSessionStatus, untickSession } from '../lib/utils';
 import { readStore, writeStore, enqueueWorkout, removeQueued, flushOutbox } from '../lib/offline';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -40,7 +40,6 @@ const planFromTemplate = (template, lastByName = {}) => template ? {
     .map(ex => toLocalExercise(ex, lastByName[nameKey(ex.name)])),
 } : EMPTY_WORKOUT;
 
-const hasProgress = (workout) => workout.exercises.some(ex => ex.completed || Object.keys(ex.logged_sets || {}).length > 0);
 const loggedCount = (ex) => Object.keys(ex.logged_sets || {}).length;
 
 // A heavier logged set raises the planned weight (saved to the template on finish)
@@ -79,6 +78,7 @@ export default function Workouts({ session }) {
   const pendingFinishId = useRef(null);
   const serverDoneTodayRef = useRef(false);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [planChanged, setPlanChanged] = useState(null); // 'rest' | 'changed' | null
 
   // iOS-style large title: once it scrolls out of view, the slim bar shows instead
   const headerEndRef = useRef(null);
@@ -193,10 +193,13 @@ export default function Workouts({ session }) {
   const showFromStore = (serverDoneToday = serverDoneTodayRef.current) => {
     const now = new Date();
     const stored = readStore(userId, 'session', null);
+    const templates = readStore(userId, 'templates', null); // null: plan never loaded on this phone yet
+    const todaysTemplate = templates?.[today];
 
-    // A started workout stays until it is finished or discarded, whatever the date.
-    // One from an earlier day with nothing ticked is just dropped.
-    if (stored && (isSameDay(stored.startedAt, now) || hasProgress(stored))) {
+    // Keeps a started workout only while it still applies (see storedSessionStatus)
+    const { keep, planChanged } = storedSessionStatus(stored, todaysTemplate, now, templates !== null);
+    setPlanChanged(planChanged ? (todaysTemplate?.is_rest_day ? 'rest' : 'changed') : null);
+    if (keep) {
       setWorkout(stored);
       setIsTodayCompleted(false);
       setLoading(false);
@@ -206,7 +209,7 @@ export default function Workouts({ session }) {
 
     const last = readStore(userId, 'lastFinished', null);
     setIsTodayCompleted(serverDoneToday || (!!last && isSameDay(last.completedAt, now)));
-    setWorkout(planFromTemplate(readStore(userId, 'templates', {})[today], readStore(userId, 'lastPerformance', {})));
+    setWorkout(planFromTemplate(todaysTemplate, readStore(userId, 'lastPerformance', {})));
     setLoading(false);
   };
 
@@ -282,9 +285,9 @@ export default function Workouts({ session }) {
     // Not uploaded yet: just take it back out of the queue
     if (last && removeQueued(userId, last.clientId)) {
       writeStore(userId, 'lastFinished', null);
-      writeStore(userId, 'session', last.session);
+      writeStore(userId, 'session', untickSession(last.session));
       pendingFinishId.current = null;
-      toast?.success("Workout undone. You can keep editing it.");
+      toast?.success("Workout undone. Your exercises are back, unticked.");
       showFromStore();
       return;
     }
@@ -310,10 +313,10 @@ export default function Workouts({ session }) {
     }
 
     writeStore(userId, 'lastFinished', null);
-    if (last?.workoutId === workoutId) writeStore(userId, 'session', last.session);
+    if (last?.workoutId === workoutId) writeStore(userId, 'session', untickSession(last.session));
     setServerCompletedId(null);
     serverDoneTodayRef.current = false;
-    toast?.success("Workout undone. You can keep editing it.");
+    toast?.success("Workout undone. Your exercises are back, unticked.");
     await loadWorkout();
   };
 
@@ -639,6 +642,20 @@ export default function Workouts({ session }) {
             <p className="today-notice">
               Unfinished workout from {DAYS[new Date(workout.startedAt).getDay()]}. Finishing it saves it to that day.
             </p>
+          )}
+
+          {/* Plan edited after sets were logged: keep the sets, but say so and offer a way out */}
+          {planChanged && (
+            <div className="today-notice today-notice-action">
+              <p>
+                {planChanged === 'rest'
+                  ? `${today} is now a rest day in your plan. Finish this workout to keep what you logged, or cancel it.`
+                  : `Your plan for ${today} changed after you started. Finish this workout to keep what you logged, or cancel it to start the new plan.`}
+              </p>
+              <button className="text-button text-button-danger" onClick={() => setIsCancelModalOpen(true)}>
+                Cancel workout
+              </button>
+            </div>
           )}
 
           {exercises.length === 0 ? (
