@@ -20,6 +20,7 @@ export async function submitWorkout(userId, op) {
     xpGained: data.xp_gained,
     routineName: op.routineName,
     completedAt: op.completedAt,
+    alreadySaved: !!data.already_saved,
     prsHit: [],
     earnedAchievements: [],
   };

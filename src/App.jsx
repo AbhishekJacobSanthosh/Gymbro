@@ -149,6 +149,15 @@ function SyncStatus({ userId, online }) {
     };
   }, [userId, online]);
 
+  // iPhone doesn't always report signal coming back, so keep trying while something is waiting
+  useEffect(() => {
+    if (!online || pending.queued === 0) return;
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') flushOutbox(userId);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [userId, online, pending.queued]);
+
   useEffect(() => {
     const onSynced = (e) => {
       const { routineName, xpGained, earnedAchievements } = e.detail;
@@ -217,12 +226,13 @@ function App() {
     const restore = async () => {
       const { data: { session }, error } = await supabase.auth.getSession();
       if (session) {
-        setSession(session);
+        // Same token: keep the same object, so pages don't reload their data on every app switch
+        setSession(prev => prev?.access_token === session.access_token ? prev : session);
       } else if (isAuthRetryableFetchError(error)) {
         // Offline with an expired login: Supabase keeps the refresh token, so stay signed in
         // with the cached user and refresh once signal is back
         const user = readLastUser();
-        setSession(user ? { user, offline: true } : null);
+        setSession(prev => prev?.offline ? prev : (user ? { user, offline: true } : null));
       } else {
         setSession(null);
       }
@@ -242,10 +252,14 @@ function App() {
       }
     });
 
+    // Coming back online or to the foreground: renew an offline login
+    const onVisible = () => { if (document.visibilityState === 'visible') restore(); };
     window.addEventListener('online', restore);
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       subscription.unsubscribe();
       window.removeEventListener('online', restore);
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, []);
 
@@ -272,8 +286,8 @@ function App() {
         <div className="app-container">
           <Sidebar onLogout={handleLogout} />
           <main className="main-content">
-            <SyncStatus userId={session.user.id} online={!session.offline} />
             <PageWrapper>
+              <SyncStatus userId={session.user.id} online={!session.offline} />
               <Routes>
                 <Route path="/" element={<HomePage session={session} />} />
                 <Route path="/templates" element={<TemplatesPage session={session} />} />

@@ -589,7 +589,7 @@ input[type="number"] {
 /* ---- Toast ---- */
 .toast-container {
   position: fixed;
-  top: var(--space-6);
+  top: calc(var(--space-6) + env(safe-area-inset-top));
   right: var(--space-6);
   z-index: 9999;
   display: flex;
@@ -1648,6 +1648,8 @@ input[type="number"] {
     margin-left: 0;
     width: 100%;
     padding: var(--space-5) var(--space-4);
+    /* Installed iPhone app draws under the status bar (viewport-fit=cover) */
+    padding-top: calc(var(--space-5) + env(safe-area-inset-top));
     padding-bottom: calc(var(--mobile-nav-height) + var(--space-6) + env(safe-area-inset-bottom));
     max-width: 100%;
   }

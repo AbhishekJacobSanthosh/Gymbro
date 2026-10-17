@@ -57,11 +57,17 @@ export function retryFailed(userId) {
 const isTransient = (error) => !error?.code || error.code === '23505' || String(error.code).startsWith('PGRST3');
 
 let running = null;
+let runningSince = 0;
+const STUCK_AFTER_MS = 15000;
 
 // Uploads queued workouts in order. Safe to call often: concurrent calls share one run,
 // and each workout carries a client id so a retry after a dropped response is not saved twice.
+// A run older than 15s is treated as stuck (iPhone froze the app mid-request) and replaced.
 export function flushOutbox(userId) {
-  running ??= (async () => {
+  if (running && Date.now() - runningSince < STUCK_AFTER_MS) return running;
+  runningSince = Date.now();
+  const run = (async () => {
+    await null; // start after `running = run` below, so the finally block can compare against it
     try {
       let op;
       while ((op = getQueued(userId)[0])) {
@@ -79,17 +85,21 @@ export function flushOutbox(userId) {
         if (result) {
           const last = readStore(userId, 'lastFinished', null);
           if (last?.clientId === op.clientId) writeStore(userId, 'lastFinished', { ...last, workoutId: result.workoutId });
-          window.dispatchEvent(new CustomEvent('gymbro:synced', { detail: result }));
+          // A retry of an already-saved workout (e.g. a stuck run finishing late) doesn't celebrate twice
+          if (!result.alreadySaved) window.dispatchEvent(new CustomEvent('gymbro:synced', { detail: result }));
         }
         notify();
         if (getQueued(userId)[0]?.clientId === op.clientId) break; // storage refused the write; don't loop forever
       }
     } finally {
-      inFlight = null;
-      running = null;
+      if (running === run) {
+        inFlight = null;
+        running = null;
+      }
     }
   })();
-  return running;
+  running = run;
+  return run;
 }
 
 export function confirmSignOut(userId) {
