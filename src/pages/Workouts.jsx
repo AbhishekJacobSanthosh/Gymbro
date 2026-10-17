@@ -335,10 +335,23 @@ export default function Workouts({ session }) {
     setNewExercise({ name: '', sets: '', reps: '', weight: '', minutes: '' });
   };
 
-  // Exercises without sets (cardio): one tick for the whole thing
-  const toggleComplete = (key) => updateExercise(key, ex => (
-    ex.completed ? { ...ex, completed: false, logged_sets: null } : { ...ex, completed: true }
-  ));
+  // The big circle: ticks the whole exercise, logging every remaining set with what is in its
+  // boxes; unticking clears them. Exercises without sets (cardio) just toggle.
+  const toggleComplete = (key) => {
+    const ex = exercises.find(e => e.key === key);
+    if (ex && !ex.completed) {
+      if ((parseInt(ex.sets) || 0) > 0) startRest();
+      if (expandedKey === key) setExpandedKey(null);
+    }
+    updateExercise(key, ex => {
+      if (ex.completed) return { ...ex, completed: false, logged_sets: null };
+      const logged = { ...(ex.logged_sets || {}) };
+      for (let i = 0; i < (parseInt(ex.sets) || 0); i++) {
+        logged[i] ??= { ...(ex.set_drafts?.[i] || { reps: ex.reps, weight: ex.weight }) };
+      }
+      return withTopWeight({ ...ex, completed: true, logged_sets: Object.keys(logged).length ? logged : null });
+    });
+  };
 
   const toggleSet = (key, setIndex) => {
     const ex = exercises.find(e => e.key === key);
@@ -637,34 +650,37 @@ export default function Workouts({ session }) {
                 const isOpen = ex.key === openKey;
                 const plan = sets > 0 ? `${sets} × ${ex.reps}` : ex.minutes > 0 ? `${ex.minutes} min` : '';
 
+                // Big circle: tick the whole exercise without going set by set
+                const exerciseTick = (
+                  <button
+                    onClick={() => toggleComplete(ex.key)}
+                    aria-label={`Mark all of ${ex.name} ${ex.completed ? 'not done' : 'done'}`}
+                    className={`set-check ex-tick ${ex.completed ? 'checked' : ''}`}
+                  >
+                    <span className="set-check-circle">{ex.completed && <Check size={18} strokeWidth={3} />}</span>
+                  </button>
+                );
+
                 if (!isOpen) {
                   return (
-                    <button key={ex.key} className={`ex-row ${ex.completed ? 'is-done' : ''}`} onClick={() => setExpandedKey(ex.key)}>
-                      <span className="ex-row-name">{ex.name}</span>
-                      <span className="ex-row-plan">{plan}</span>
-                      {ex.completed
-                        ? <span className="ex-row-done" aria-label="Done"><Check size={16} strokeWidth={3} /></span>
-                        : sets > 0 && <span className="ex-row-count num">{loggedCount(ex)}/{sets}</span>}
-                      <ChevronDown size={18} className="ex-row-chevron" />
-                    </button>
+                    <div key={ex.key} className={`ex-row ${ex.completed ? 'is-done' : ''}`}>
+                      {exerciseTick}
+                      <button className="ex-row-open" onClick={() => setExpandedKey(ex.key)} aria-label={`Open ${ex.name}`}>
+                        <span className="ex-row-name">{ex.name}</span>
+                        <span className="ex-row-plan">{plan}</span>
+                        {!ex.completed && sets > 0 && <span className="ex-row-count num">{loggedCount(ex)}/{sets}</span>}
+                        <ChevronDown size={18} className="ex-row-chevron" />
+                      </button>
+                    </div>
                   );
                 }
 
                 return (
                   <article key={ex.key} className="ex-card">
                     <div className="ex-card-head">
+                      {exerciseTick}
                       <h2 className="ex-card-name">{ex.name}</h2>
-                      {sets > 0
-                        ? <span className="ex-row-count num">{loggedCount(ex)}/{sets}</span>
-                        : (
-                          <button
-                            onClick={() => toggleComplete(ex.key)}
-                            aria-label={`Mark ${ex.name} ${ex.completed ? 'not done' : 'done'}`}
-                            className={`set-check ${ex.completed ? 'checked' : ''}`}
-                          >
-                            <span className="set-check-circle">{ex.completed && <Check size={16} strokeWidth={3} />}</span>
-                          </button>
-                        )}
+                      {sets > 0 && <span className="ex-row-count num">{loggedCount(ex)}/{sets}</span>}
                     </div>
                     {sets > 0 ? renderSetTable(ex) : plan && <p className="ex-card-plan">{plan}</p>}
                   </article>
