@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateStreak, calculateVolume, parseReps, getActiveTemplates, getRestDays, getLevelProgress, workoutCompletedAt, lastPerformanceByName, plannedSetDrafts, formatSet, buildWeek, storedSessionStatus, untickSession } from './utils.js';
+import { calculateStreak, calculateVolume, parseReps, getActiveTemplates, getRestDays, getLevelProgress, workoutCompletedAt, lastPerformanceByName, plannedSetDrafts, formatSet, buildWeek, storedSessionStatus, untickSession, weekProgress } from './utils.js';
 
 // Fixed "today": Saturday 17 Oct 2026, noon local time
 beforeEach(() => mock.timers.enable({ apis: ['Date'], now: new Date(2026, 9, 17, 12) }));
@@ -186,4 +186,14 @@ test('undo brings the workout back unticked, keeping the numbers entered', () =>
   assert.deepEqual(back.exercises[0].set_drafts, { 0: { reps: '10', weight: 80 }, 1: { reps: '8', weight: 82.5 } });
   assert.equal(back.startedAt, now.toISOString());
   assert.equal(back.templateId, 7);
+});
+
+test('this week: planned days trained out of planned days, unplanned training as extra', () => {
+  const day = (planned, trained) => ({ planned, trained });
+  // Your case: only Sunday planned; trained Sunday (logged later) and an unplanned Saturday -> 1/1, +1 extra
+  const week = [day(true, true), day(false, false), day(false, false), day(false, false), day(false, false), day(false, false), day(false, true)];
+  assert.deepEqual(weekProgress(week), { plannedDays: 1, plannedDone: 1, trainedDays: 2, extraDays: 1 });
+  // Five planned, all done
+  const full = [day(false, false), day(true, true), day(true, true), day(true, true), day(true, true), day(true, true), day(false, false)];
+  assert.deepEqual(weekProgress(full), { plannedDays: 5, plannedDone: 5, trainedDays: 5, extraDays: 0 });
 });

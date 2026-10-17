@@ -164,6 +164,15 @@ export function buildWeek(completedDates, templatesByDay, today = new Date()) {
   });
 }
 
+// "This week" on the dashboard: planned days trained out of planned days (so it tops out at 5/5),
+// plus days trained that had nothing planned.
+export function weekProgress(week) {
+  const plannedDays = week.filter(d => d.planned).length;
+  const plannedDone = week.filter(d => d.planned && d.trained).length;
+  const trainedDays = week.filter(d => d.trained).length;
+  return { plannedDays, plannedDone, trainedDays, extraDays: trainedDays - plannedDone };
+}
+
 // Newest template per weekday. Skips history and in-progress spontaneous workouts.
 export function getActiveTemplates(workouts) {
   const byDay = {};

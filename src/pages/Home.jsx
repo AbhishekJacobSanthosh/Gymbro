@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import { Check, ChevronRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useToast } from '../App';
-import { getGreeting, getRelativeTime, calculateStreak, calculateVolume, parseReps, getActiveTemplates, getRestDays, buildWeek } from '../lib/utils';
+import { getGreeting, getRelativeTime, calculateStreak, calculateVolume, parseReps, getActiveTemplates, getRestDays, buildWeek, weekProgress } from '../lib/utils';
 import { readStore } from '../lib/offline';
 
 const quotes = [
@@ -129,7 +129,7 @@ export default function Home({ session }) {
   const [weight, setWeight] = useState('');
   const [weightData, setWeightData] = useState([]);
   const [activities, setActivities] = useState([]);
-  const [stats, setStats] = useState({ totalWorkouts: 0, currentStreak: 0, plannedDays: 0 });
+  const [stats, setStats] = useState({ totalWorkouts: 0, currentStreak: 0 });
   const [displayName, setDisplayName] = useState('');
   const [level, setLevel] = useState(1);
   const [xp, setXp] = useState(0);
@@ -232,15 +232,12 @@ export default function Home({ session }) {
 
     let streak = 0;
     let totalWorkouts = 0;
-    let goal = 0;
 
     if (allWorkouts && allWorkouts.length > 0) {
-      // 1. Calculate Weekly Goal (newest template per day that is not a rest day and has exercises)
+      // 1. Newest template per day: rest days for the streak, planned days for the week strip
+      // (buildWeek ignores empty templates, which are created just by opening a day in the Planner)
       const templatesByDay = getActiveTemplates(allWorkouts);
       const restDaysOfWeek = getRestDays(templatesByDay);
-
-      // Empty templates are created just by opening a day in the Planner, so they don't count
-      goal = Object.values(templatesByDay).filter(t => !t.is_rest_day && t.exercises?.length > 0).length;
 
       // 2. Filter to only completed history for streak and progress
       const completedHistory = allWorkouts
@@ -288,8 +285,7 @@ export default function Home({ session }) {
     setStats(prev => ({
       ...prev,
       totalWorkouts,
-      currentStreak: streak,
-      plannedDays: goal
+      currentStreak: streak
     }));
 
     // 6. Fetch 1RMs
@@ -354,7 +350,7 @@ export default function Home({ session }) {
   const weightChange = latestWeight != null && firstWeight != null && weightData.length > 1
     ? Math.round((latestWeight - firstWeight) * 10) / 10
     : null;
-  const trainedDays = week.filter(d => d.trained).length;
+  const { plannedDays, plannedDone, trainedDays, extraDays } = weekProgress(week);
   const dayStatus = (d) => d.trained ? 'trained' : d.rest ? 'rest day' : d.planned ? 'planned' : 'nothing planned';
 
   return (
@@ -394,9 +390,9 @@ export default function Home({ session }) {
           </div>
           <div>
             <dt>This week</dt>
-            {/* Days trained, the same days the strip above ticks; extra days beyond the plan just count up */}
-            <dd className="num">{trainedDays} {trainedDays === 1 ? 'day' : 'days'}</dd>
-            {stats.plannedDays > 0 && <dd className="week-stats-note">{stats.plannedDays} planned</dd>}
+            {/* Planned days trained / planned days (tops out at 5/5); training on an unplanned day shows as extra */}
+            <dd className="num">{plannedDays > 0 ? `${plannedDone}/${plannedDays}` : `${trainedDays} ${trainedDays === 1 ? 'day' : 'days'}`}</dd>
+            {plannedDays > 0 && extraDays > 0 && <dd className="week-stats-note">+{extraDays} extra</dd>}
           </div>
           <div>
             <dt>Shields left</dt>
