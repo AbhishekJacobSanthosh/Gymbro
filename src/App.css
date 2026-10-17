@@ -345,3 +345,40 @@
 .accent-preview .btn {
   pointer-events: none;
 }
+
+/* ---- Set tick (Today) ---- */
+/* 44px tap area around a 30px circle; the empty ring must stay visible on graphite */
+.set-check {
+  width: 44px;
+  height: 44px;
+  margin: -6px -8px -6px 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.set-check-circle {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
+}
+
+.set-check.checked .set-check-circle {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+/* Logged sets: numbers step back, the tick stays bright. iOS fades disabled inputs on its own, so set it explicitly. */
+.exercise-inline-input:disabled {
+  color: var(--text-secondary);
+  -webkit-text-fill-color: var(--text-secondary);
+  opacity: 1;
+}

@@ -623,7 +623,7 @@ export default function Workouts({ session }) {
                                     alignItems: 'center',
                                     backgroundColor: isSetCompleted ? 'var(--bg-surface)' : 'var(--bg-elevated)',
                                     padding: '8px 12px',
-                                    opacity: isSetCompleted ? 0.6 : 1,
+                                    color: isSetCompleted ? 'var(--text-secondary)' : undefined,
                                     transition: 'all 0.2s'
                                   }}>
                                     <div style={{ fontWeight: 600, fontSize: '0.75rem', color: 'var(--text-tertiary)', width: '40px' }}>
@@ -663,22 +663,11 @@ export default function Workouts({ session }) {
                                     <button
                                       onClick={() => toggleSet(ex.key, i)}
                                       aria-label={`Mark set ${i + 1} ${isSetCompleted ? 'not done' : 'done'}`}
-                                      style={{
-                                        width: '24px',
-                                        height: '24px',
-                                        borderRadius: '50%',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        backgroundColor: isSetCompleted ? 'var(--accent)' : 'transparent',
-                                        color: isSetCompleted ? 'var(--accent-contrast)' : 'var(--text-tertiary)',
-                                        border: `2px solid ${isSetCompleted ? 'var(--accent)' : 'var(--border)'}`,
-                                        cursor: 'pointer',
-                                        transition: 'all 0.2s',
-                                        marginLeft: '12px'
-                                      }}
+                                      className={`set-check ${isSetCompleted ? 'checked' : ''}`}
                                     >
-                                      {isSetCompleted && <Check size={14} strokeWidth={3} />}
+                                      <span className="set-check-circle">
+                                        {isSetCompleted && <Check size={16} strokeWidth={3} />}
+                                      </span>
                                     </button>
                                   </div>
                                 );

@@ -772,7 +772,7 @@ input[type="number"] {
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 2px solid var(--border-hover);
+  border: 2px solid var(--text-tertiary); /* empty ring must stay visible on graphite */
   color: transparent;
   transition: var(--transition-normal);
   flex-shrink: 0;
