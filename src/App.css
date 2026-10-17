@@ -360,15 +360,56 @@
   gap: var(--space-4);
 }
 
-/* Header stays visible while you scroll through exercises */
 .today-header {
-  position: sticky;
+  padding-bottom: var(--space-1);
+}
+
+/* Slim bar that fades in once the big title has scrolled away (iOS large-title pattern) */
+.today-minibar {
+  position: fixed;
   top: 0;
-  z-index: 20;
-  padding-bottom: var(--space-3);
-  background: rgba(0, 0, 0, 0.9);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  left: var(--sidebar-width);
+  right: 0;
+  z-index: 30;
+  padding: calc(var(--space-3) + env(safe-area-inset-top)) var(--space-4) 0;
+  background: rgba(0, 0, 0, 0.88);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  opacity: 0;
+  transform: translateY(-100%);
+  pointer-events: none;
+  transition: opacity var(--duration-normal) var(--ease-out), transform var(--duration-normal) var(--ease-out);
+}
+
+.today-minibar.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+.today-minibar-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+}
+
+.today-minibar-title {
+  font-weight: var(--font-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.today-minibar-clock {
+  font-size: 1.125rem;
+  color: var(--accent);
+}
+
+.today-minibar-progress {
+  margin: var(--space-3) calc(-1 * var(--space-4)) 0;
+  border-radius: 0;
 }
 
 .today-header-row {
@@ -522,6 +563,10 @@
   border-radius: var(--radius-sm);
 }
 
+.set-table.no-last .set-row {
+  grid-template-columns: 24px minmax(0, 1fr) 64px 44px;
+}
+
 .set-row-head {
   min-height: 28px;
   font-size: 0.75rem;
@@ -529,14 +574,14 @@
   color: var(--text-tertiary);
 }
 
-.set-row-head span:nth-child(3),
-.set-row-head span:nth-child(4) {
+.set-row-head span:nth-last-child(2),
+.set-row-head span:nth-last-child(3) {
   text-align: center;
 }
 
 /* The set you are on now */
-.set-row.is-active {
-  background: var(--bg-overlay);
+.set-row.is-active .set-num {
+  color: var(--accent);
 }
 
 .set-num {
@@ -568,9 +613,10 @@
   padding: 0 4px;
   text-align: center;
   font-size: 1.125rem;
-  background: var(--bg-surface);
+  font-weight: var(--font-semibold);
+  background: var(--bg-hover);
   border: 1px solid transparent;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
 }
 
 .set-input:focus {
@@ -581,20 +627,31 @@
   background: transparent;
 }
 
+.set-kg.has-steps {
+  gap: 0;
+  background: var(--bg-hover);
+  border-radius: var(--radius-sm);
+}
+
+.set-kg.has-steps .set-input {
+  background: transparent;
+  padding: 0;
+}
+
 .set-step {
-  width: 30px;
+  width: 34px;
   height: 40px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-xs);
-  background: var(--bg-hover);
-  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
 }
 
 .set-step:active {
   background: var(--border-hover);
+  color: var(--text-primary);
 }
 
 .set-actions {
@@ -619,6 +676,23 @@
 .text-button-danger { color: var(--danger); }
 
 /* ---- Add an exercise ---- */
+.quick-add-toggle {
+  align-self: flex-start;
+}
+
+.quick-add-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.quick-add-head .form-label {
+  margin-bottom: 0;
+}
+
+.quick-add-close {
+  position: static;
+}
 .quick-add {
   display: flex;
   flex-direction: column;
@@ -737,6 +811,14 @@
   color: var(--text-secondary);
 }
 
+.today-finish-count {
+  margin-left: var(--space-2);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--bg-hover);
+  font-size: 0.9375rem;
+}
+
 .rest-bar {
   display: flex;
   align-items: center;
@@ -825,19 +907,17 @@
 }
 
 @media (max-width: 640px) {
-  /* Header reaches the screen edges and sits below the iPhone status bar */
-  .today-header {
-    margin: calc(-1 * (var(--space-5) + env(safe-area-inset-top))) calc(-1 * var(--space-4)) 0;
-    padding: calc(var(--space-5) + env(safe-area-inset-top)) var(--space-4) var(--space-3);
+  .today-minibar {
+    left: 0;
   }
 
   .today-dock {
     bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom) + var(--space-2));
   }
+}
 
-  /* With the sync banner above it, the header starts below the banner instead of under it */
-  .sync-banner + .today .today-header {
-    margin-top: 0;
-    padding-top: calc(var(--space-3) + env(safe-area-inset-top));
+@media (min-width: 641px) and (max-width: 1024px) {
+  .today-minibar {
+    left: 72px;
   }
 }

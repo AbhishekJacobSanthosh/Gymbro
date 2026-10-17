@@ -78,6 +78,21 @@ export default function Workouts({ session }) {
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
   const pendingFinishId = useRef(null);
   const serverDoneTodayRef = useRef(false);
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
+
+  // iOS-style large title: once it scrolls out of view, the slim bar shows instead
+  const headerEndRef = useRef(null);
+  const [headerScrolledAway, setHeaderScrolledAway] = useState(false);
+  useEffect(() => {
+    const marker = headerEndRef.current;
+    if (!marker) return;
+    // Triggers when the title's bottom edge passes under where the slim bar sits (~64px)
+    const observer = new IntersectionObserver(([entry]) => {
+      setHeaderScrolledAway(!entry.isIntersecting && entry.boundingClientRect.top < 64);
+    }, { rootMargin: '-64px 0px 0px 0px' });
+    observer.observe(marker);
+    return () => observer.disconnect();
+  }, []);
 
   const { exercises, routineName, isRestDay } = workout;
   const hasWorkout = workout.templateId !== null || !!workout.startedAt;
@@ -316,6 +331,7 @@ export default function Workouts({ session }) {
     }, lastByName[nameKey(name)]);
     updateWorkout(w => ({ ...w, exercises: [...w.exercises, added] }));
     setExpandedKey(added.key);
+    setShowQuickAdd(false);
     setNewExercise({ name: '', sets: '', reps: '', weight: '', minutes: '' });
   };
 
@@ -431,6 +447,7 @@ export default function Workouts({ session }) {
     ? expandedKey
     : (exercises.find(ex => !ex.completed) ?? exercises[0])?.key;
   const showDock = hasWorkout && !isRestDay && exercises.length > 0 && !isTodayCompleted;
+  const progressPct = totalSets ? (doneSets / totalSets) * 100 : 0;
 
   const title = loading ? 'Today' : isTodayCompleted ? 'Done for today' : isRestDay ? 'Rest day' : hasWorkout ? routineName : 'Today';
   const subtitle = startedEarlierDay
@@ -442,14 +459,16 @@ export default function Workouts({ session }) {
   const renderSetTable = (ex) => {
     const sets = parseInt(ex.sets) || 0;
     const last = lastByName[nameKey(ex.name)] || [];
+    const hasLast = last.length > 0;
     const activeIndex = Array.from({ length: sets }, (_, i) => i).find(i => !ex.logged_sets?.[i]);
 
     return (
       <>
-        <div className="set-table" role="table" aria-label={`${ex.name} sets`}>
+        {/* The "Last" column only shows for exercises you have done before */}
+        <div className={`set-table ${hasLast ? '' : 'no-last'}`} role="table" aria-label={`${ex.name} sets`}>
           <div className="set-row set-row-head" role="row">
             <span role="columnheader">Set</span>
-            <span role="columnheader">Last</span>
+            {hasLast && <span role="columnheader">Last</span>}
             <span role="columnheader">kg</span>
             <span role="columnheader">Reps</span>
             <span role="columnheader" className="sr-only">Done</span>
@@ -462,8 +481,8 @@ export default function Workouts({ session }) {
             return (
               <div key={i} role="row" className={`set-row ${logged ? 'is-done' : ''} ${isActive ? 'is-active' : ''}`}>
                 <span className="set-num num">{i + 1}</span>
-                <span className="set-last">{formatSet(last[i]) ?? '–'}</span>
-                <span className="set-kg">
+                {hasLast && <span className="set-last">{formatSet(last[i]) ?? ''}</span>}
+                <span className={`set-kg ${isActive ? 'has-steps' : ''}`}>
                   {isActive && (
                     <button className="set-step" onClick={() => stepWeight(ex, i, -WEIGHT_STEP)} aria-label={`Set ${i + 1}: ${WEIGHT_STEP} kg less`}>
                       <Minus size={14} strokeWidth={3} />
@@ -547,10 +566,22 @@ export default function Workouts({ session }) {
         </div>
         {showDock && (
           <div className="today-progress" role="progressbar" aria-valuemin={0} aria-valuemax={totalSets} aria-valuenow={doneSets} aria-label="Sets done">
-            <span style={{ width: `${totalSets ? (doneSets / totalSets) * 100 : 0}%` }} />
+            <span style={{ width: `${progressPct}%` }} />
           </div>
         )}
       </header>
+      <div ref={headerEndRef} aria-hidden="true" />
+
+      {/* Slim bar that takes over once the big title scrolls away */}
+      {showDock && (
+        <div className={`today-minibar ${headerScrolledAway ? 'is-visible' : ''}`} aria-hidden="true">
+          <div className="today-minibar-row">
+            <span className="today-minibar-title">{routineName}</span>
+            {elapsed !== null && <span className="today-minibar-clock num">{formatClock(elapsed)}</span>}
+          </div>
+          <div className="today-progress today-minibar-progress"><span style={{ width: `${progressPct}%` }} /></div>
+        </div>
+      )}
 
       {loading ? (
         <div className="empty-state">
@@ -642,12 +673,24 @@ export default function Workouts({ session }) {
             </div>
           )}
 
-          {/* Add Exercise Form */}
+          {/* Add Exercise Form: folded away mid-workout, open when there is nothing yet */}
+          {!showQuickAdd && exercises.length > 0 ? (
+            <button className="text-button quick-add-toggle" onClick={() => setShowQuickAdd(true)}>
+              <Plus size={18} /> Add exercise
+            </button>
+          ) : (
           <form onSubmit={handleAddExercise} className="quick-add">
             <datalist id="exercise-suggestions">
               {pastExercises.map(name => <option key={name} value={name} />)}
             </datalist>
-            <label htmlFor="quick-add-name" className="form-label">Add an exercise</label>
+            <div className="quick-add-head">
+              <label htmlFor="quick-add-name" className="form-label">Add an exercise</label>
+              {exercises.length > 0 && (
+                <button type="button" className="modal-close quick-add-close" onClick={() => setShowQuickAdd(false)} aria-label="Close">
+                  <X size={18} />
+                </button>
+              )}
+            </div>
             <input
               id="quick-add-name"
               type="text"
@@ -655,6 +698,7 @@ export default function Workouts({ session }) {
               placeholder="Exercise name"
               value={newExercise.name}
               onChange={e => setNewExercise({ ...newExercise, name: e.target.value })}
+              autoFocus={exercises.length > 0}
               required
             />
             <div className="quick-add-row">
@@ -669,6 +713,7 @@ export default function Workouts({ session }) {
               <button type="submit" className="btn btn-secondary" aria-label="Add exercise"><Plus size={18} /></button>
             </div>
           </form>
+          )}
 
           {workout.startedAt && (
             <button className="text-button text-button-danger today-cancel" onClick={() => setIsCancelModalOpen(true)}>
@@ -700,9 +745,10 @@ export default function Workouts({ session }) {
           >
             {finishing
               ? <><Loader2 size={20} className="animate-spin" /> Saving</>
-              : allDone
-                ? <><Check size={20} /> Finish workout</>
-                : `${completedCount}/${exercises.length} exercises done`}
+              : <>
+                  {allDone && <Check size={20} />} Finish workout
+                  {!allDone && <span className="today-finish-count num">{completedCount}/{exercises.length}</span>}
+                </>}
           </button>
         </div>
       )}
