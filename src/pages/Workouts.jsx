@@ -1,10 +1,49 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Check, Dumbbell, Coffee, Loader2, Trophy, Undo2, Plus, Play, Square, TimerReset, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../App';
-import { calculateXpGained, calculateLevelFromXp, calculateStreak, getEarnedAchievements } from '../lib/utils';
+import { getActiveTemplates, workoutCompletedAt } from '../lib/utils';
+import { readStore, writeStore, enqueueWorkout, removeQueued, flushOutbox } from '../lib/offline';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+const startOfDay = (date) => { const d = new Date(date); d.setHours(0, 0, 0, 0); return d; };
+const isSameDay = (a, b) => startOfDay(a).getTime() === startOfDay(b).getTime();
+
+const EMPTY_WORKOUT = { templateId: null, routineName: 'No Template', isRestDay: false, exercises: [], startedAt: null, lastActivityAt: null };
+
+// A planned exercise becomes a local one; ticks always start empty
+const toLocalExercise = (ex) => ({
+  key: ex.id ? `t${ex.id}` : crypto.randomUUID(),
+  template_exercise_id: ex.id ?? null,
+  name: ex.name,
+  sets: ex.sets,
+  reps: ex.reps,
+  weight: ex.weight,
+  minutes: ex.minutes,
+  completed: false,
+  logged_sets: null,
+  set_drafts: Object.fromEntries(Array.from({ length: parseInt(ex.sets) || 0 }, (_, i) => [i, { reps: ex.reps, weight: ex.weight }])),
+});
+
+const planFromTemplate = (template) => template ? {
+  ...EMPTY_WORKOUT,
+  templateId: template.id,
+  routineName: template.routine_name || 'Workout',
+  isRestDay: !!template.is_rest_day,
+  exercises: [...(template.exercises || [])]
+    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+    .map(toLocalExercise),
+} : EMPTY_WORKOUT;
+
+const hasProgress = (workout) => workout.exercises.some(ex => ex.completed || Object.keys(ex.logged_sets || {}).length > 0);
+
+// A heavier logged set raises the planned weight (saved to the template on finish)
+const withTopWeight = (ex) => {
+  const planned = parseFloat(ex.weight) || 0;
+  const top = Math.max(planned, ...Object.values(ex.logged_sets || {}).map(set => parseFloat(set.weight) || 0));
+  return top > planned ? { ...ex, weight: top } : ex;
+};
 
 function ProgressRing({ completed, total, size = 100, strokeWidth = 6 }) {
   const radius = (size - strokeWidth) / 2;
@@ -46,43 +85,47 @@ function ProgressRing({ completed, total, size = 100, strokeWidth = 6 }) {
   );
 }
 
-let hasLoadedOnce = false;
-
 export default function Workouts({ session }) {
   const toast = useToast();
+  const userId = session.user.id;
   const [today] = useState(DAYS[new Date().getDay()]);
-  const [exercises, setExercises] = useState([]);
-  const [pastExercises, setPastExercises] = useState([]);
-  const [loading, setLoading] = useState(!hasLoadedOnce);
+  const [workout, setWorkout] = useState(EMPTY_WORKOUT);
+  const [pastExercises, setPastExercises] = useState(() => readStore(userId, 'exerciseNames', []));
+  const [loading, setLoading] = useState(true);
   const [finishing, setFinishing] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
   const [prMessages, setPrMessages] = useState([]);
 
-  // Template State
-  const [routineName, setRoutineName] = useState('Workout');
-  const [isRestDay, setIsRestDay] = useState(false);
-  const [workoutId, setWorkoutId] = useState(null);
-
   // Add Exercise State
   const [newExercise, setNewExercise] = useState({ name: '', sets: '', reps: '', weight: '', minutes: '' });
-  const [addingExercise, setAddingExercise] = useState(false);
   const [isTodayCompleted, setIsTodayCompleted] = useState(false);
-  const [completedWorkoutId, setCompletedWorkoutId] = useState(null);
+  const [serverCompletedId, setServerCompletedId] = useState(null);
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
+  const pendingFinishId = useRef(null);
 
-  // Timer State
-  const [timerSeconds, setTimerSeconds] = useState(0);
-  const [isTimerRunning, setIsTimerRunning] = useState(false);
+  const { exercises, routineName, isRestDay } = workout;
+  const hasWorkout = workout.templateId !== null || !!workout.startedAt;
+
+  // Timer State: kept on the phone so it survives leaving the page
+  const [timer, setTimer] = useState(() => readStore(userId, 'timer', { elapsed: 0, runningSince: null }));
+  const [, setTick] = useState(0);
+  const isTimerRunning = !!timer.runningSince;
+  const timerSeconds = timer.elapsed + (isTimerRunning ? Math.floor((Date.now() - timer.runningSince) / 1000) : 0);
 
   useEffect(() => {
-    let interval;
-    if (isTimerRunning) {
-      interval = setInterval(() => {
-        setTimerSeconds(s => s + 1);
-      }, 1000);
-    }
+    if (!isTimerRunning) return;
+    const interval = setInterval(() => setTick(t => t + 1), 1000);
     return () => clearInterval(interval);
   }, [isTimerRunning]);
+
+  const saveTimer = (next) => {
+    setTimer(next);
+    writeStore(userId, 'timer', next);
+  };
+  const toggleTimer = () => saveTimer(isTimerRunning
+    ? { elapsed: timerSeconds, runningSince: null }
+    : { elapsed: timer.elapsed, runningSince: Date.now() });
+  const resetTimer = () => saveTimer({ elapsed: 0, runningSince: null });
 
   const formatTime = (totalSeconds) => {
     const m = Math.floor(totalSeconds / 60);
@@ -91,560 +134,269 @@ export default function Workouts({ session }) {
   };
 
   useEffect(() => {
-    fetchTodayWorkout();
+    loadWorkout();
     fetchPastExercises();
   }, [session]);
 
+  // Celebrate PRs and badges when this page's finished workout reaches the server
+  useEffect(() => {
+    const onSynced = (e) => {
+      const { clientId, prsHit, earnedAchievements } = e.detail;
+      if (clientId !== pendingFinishId.current) return;
+      pendingFinishId.current = null;
+      if (prsHit.length > 0 || earnedAchievements.length > 0) {
+        setPrMessages(prsHit);
+        setShowConfetti(true);
+        setTimeout(() => setShowConfetti(false), 5000);
+      }
+    };
+    window.addEventListener('gymbro:synced', onSynced);
+    return () => window.removeEventListener('gymbro:synced', onSynced);
+  }, []);
+
   const fetchPastExercises = async () => {
-    if (!session?.user) return;
-    const { data } = await supabase.from('exercises').select('name').neq('name', '');
+    if (session.offline) return;
+    // Newest first so the 1000-row API cap drops the oldest names, not recent ones
+    const { data } = await supabase
+      .from('exercises')
+      .select('name, workouts!inner(user_id)')
+      .eq('workouts.user_id', userId)
+      .neq('name', '')
+      .order('created_at', { ascending: false })
+      .limit(1000);
     if (data) {
-      setPastExercises([...new Set(data.map(d => d.name))]);
+      const names = [...new Set(data.map(d => d.name))];
+      setPastExercises(names);
+      writeStore(userId, 'exerciseNames', names);
     }
   };
 
-  const fetchTodayWorkout = async () => {
-    if (!hasLoadedOnce) setLoading(true);
+  // Shows the page from what is stored on the phone, so it opens instantly and offline
+  const showFromStore = (serverDoneToday = false) => {
+    const now = new Date();
+    const stored = readStore(userId, 'session', null);
 
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
+    // A started workout stays until it is finished or discarded, whatever the date.
+    // One from an earlier day with nothing ticked is just dropped.
+    if (stored && (isSameDay(stored.startedAt, now) || hasProgress(stored))) {
+      setWorkout(stored);
+      setIsTodayCompleted(false);
+      setLoading(false);
+      return;
+    }
+    if (stored) writeStore(userId, 'session', null);
+
+    const last = readStore(userId, 'lastFinished', null);
+    setIsTodayCompleted(serverDoneToday || (!!last && isSameDay(last.completedAt, now)));
+    setWorkout(planFromTemplate(readStore(userId, 'templates', {})[today]));
+    setLoading(false);
+  };
+
+  const loadWorkout = async () => {
+    showFromStore();
+    if (session.offline) return;
+
+    const todayStart = startOfDay(new Date());
     const todayEnd = new Date(todayStart);
     todayEnd.setDate(todayEnd.getDate() + 1);
 
-    // Check if a workout was already completed today
-    const { data: completedWorkouts } = await supabase
-      .from('workouts')
-      .select('id')
-      .eq('user_id', session.user.id)
-      .eq('completed', true)
-      .gte('completed_at', todayStart.toISOString())
-      .lt('completed_at', todayEnd.toISOString())
-      .order('created_at', { ascending: false })
-      .limit(1);
+    // Refresh the weekly plan and "done today" from the server, then redraw
+    const [{ data: plans, error }, { data: completedToday }] = await Promise.all([
+      supabase
+        .from('workouts')
+        .select('*, exercises(*)')
+        .eq('user_id', userId)
+        .eq('completed', false),
+      supabase
+        .from('workouts')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('completed', true)
+        .gte('completed_at', todayStart.toISOString())
+        .lt('completed_at', todayEnd.toISOString())
+        .order('completed_at', { ascending: false })
+        .limit(1),
+    ]);
 
-    if (completedWorkouts && completedWorkouts.length > 0) {
-      setCompletedWorkoutId(completedWorkouts[0].id);
-      setIsTodayCompleted(true);
+    if (!error) writeStore(userId, 'templates', getActiveTemplates(plans));
+    setServerCompletedId(completedToday?.[0]?.id ?? null);
+    showFromStore(!!completedToday?.length);
+  };
+
+  // Every change goes through here: the workout counts as started on the first change
+  // and is saved on the phone right away.
+  const updateWorkout = (change, { activity = true } = {}) => {
+    setWorkout(prev => {
+      const next = change(prev);
+      if (activity) {
+        const at = new Date().toISOString();
+        next.startedAt ??= at;
+        next.lastActivityAt = at;
+      }
+      if (next.startedAt) writeStore(userId, 'session', next);
+      return next;
+    });
+  };
+
+  const updateExercise = (key, change, options) => updateWorkout(w => ({
+    ...w,
+    exercises: w.exercises.map(ex => ex.key === key ? change(ex) : ex),
+  }), options);
+
+  const handleStartSpontaneous = () => {
+    setIsTodayCompleted(false);
+    updateWorkout(() => ({ ...EMPTY_WORKOUT, routineName: 'Spontaneous Workout' }));
+  };
+
+  const handleDiscard = () => {
+    setIsCancelModalOpen(false);
+    writeStore(userId, 'session', null);
+    showFromStore(!!serverCompletedId);
+  };
+
+  const handleUndo = async () => {
+    const last = readStore(userId, 'lastFinished', null);
+
+    // Not uploaded yet: just take it back out of the queue
+    if (last && removeQueued(userId, last.clientId)) {
+      writeStore(userId, 'lastFinished', null);
+      writeStore(userId, 'session', last.session);
+      pendingFinishId.current = null;
+      toast?.success("Workout undone. You can keep editing it.");
+      showFromStore();
+      return;
+    }
+
+    const workoutId = last?.workoutId ?? serverCompletedId;
+    if (!workoutId) {
+      toast?.error(last ? "This workout is still uploading. Try again in a moment." : "Couldn't find the workout to undo.");
+      return;
+    }
+    if (session.offline) {
+      toast?.error("Undo needs signal once a workout has synced.");
+      return;
+    }
+
+    setLoading(true);
+    // Deletes the workout and takes back exactly the XP it was awarded, in one transaction
+    const { error } = await supabase.rpc('revoke_workout_xp', { p_workout_id: workoutId });
+    if (error) {
+      console.error(error);
+      toast?.error("Failed to undo workout.");
       setLoading(false);
       return;
     }
 
-    // Clean up abandoned Spontaneous Workouts from previous days so they don't override future templates
-    const { data: abandoned } = await supabase
-      .from('workouts')
-      .select('id')
-      .eq('user_id', session.user.id)
-      .eq('completed', false)
-      .eq('routine_name', 'Spontaneous Workout')
-      .lt('created_at', todayStart.toISOString());
-    
-    if (abandoned && abandoned.length > 0) {
-      const abandonedIds = abandoned.map(a => a.id);
-      await supabase.from('exercises').delete().in('workout_id', abandonedIds);
-      await supabase.from('workouts').delete().in('id', abandonedIds);
-    }
-
-    // Find the template (completed = false) for TODAY
-    let { data: templates } = await supabase
-      .from('workouts')
-      .select('*')
-      .eq('user_id', session.user.id)
-      .eq('day_of_week', today)
-      .eq('completed', false)
-      .neq('routine_name', 'Spontaneous Workout')
-      .order('created_at', { ascending: false })
-      .limit(1);
-
-    if (!templates || templates.length === 0) {
-      setRoutineName('No Template');
-      setIsRestDay(false);
-      setExercises([]);
-      setWorkoutId(null);
-    } else {
-      const template = templates[0];
-      setRoutineName(template.routine_name || 'Workout');
-      setIsRestDay(template.is_rest_day || false);
-      setWorkoutId(template.id);
-
-      // Fetch exercises for today's template
-      const { data: exData } = await supabase
-        .from('exercises')
-        .select('*')
-        .eq('workout_id', template.id)
-        .order('created_at', { ascending: true });
-
-      // Clean up stale progress from previous weeks!
-      // If the user checked off exercises last week but never clicked "Finish Workout", 
-      // they stay checked. If completed_at is older than 12 hours or null, reset them.
-      let formattedExData = [];
-      const hasChecked = exData && exData.some(ex => ex.completed || (ex.logged_sets && Object.keys(ex.logged_sets).length > 0));
-      const lastTouched = template.completed_at ? new Date(template.completed_at).getTime() : 0;
-      const now = new Date().getTime();
-      const isStale = hasChecked && (now - lastTouched > 12 * 60 * 60 * 1000);
-
-      if (isStale) {
-        // Reset in DB
-        await supabase.from('exercises').update({ completed: false, logged_sets: null }).eq('workout_id', template.id);
-        // Reset locally
-        formattedExData = (exData || []).map(ex => {
-          const drafts = {};
-          const setsCount = parseInt(ex.sets) || 0;
-          for (let i = 0; i < setsCount; i++) {
-            drafts[i] = { reps: ex.reps, weight: ex.weight };
-          }
-          return { ...ex, completed: false, logged_sets: null, set_drafts: drafts };
-        });
-      } else {
-        formattedExData = (exData || []).map(ex => {
-          const drafts = {};
-          const setsCount = parseInt(ex.sets) || 0;
-          for (let i = 0; i < setsCount; i++) {
-            drafts[i] = ex.logged_sets?.[i] || { reps: ex.reps, weight: ex.weight };
-          }
-          return { ...ex, set_drafts: drafts };
-        });
-      }
-
-      setExercises(formattedExData);
-    }
-
-    hasLoadedOnce = true;
-    setLoading(false);
+    writeStore(userId, 'lastFinished', null);
+    if (last?.workoutId === workoutId) writeStore(userId, 'session', last.session);
+    setServerCompletedId(null);
+    toast?.success("Workout undone. You can keep editing it.");
+    await loadWorkout();
   };
 
-  const handleStartSpontaneous = async () => {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from('workouts')
-      .insert([{
-        user_id: session.user.id,
-        day_of_week: today,
-        routine_name: 'Spontaneous Workout',
-        completed: false,
-        is_rest_day: false
-      }])
-      .select()
-      .single();
-      
-    if (!error && data) {
-      setWorkoutId(data.id);
-      setRoutineName(data.routine_name);
-      setIsRestDay(false);
-      setExercises([]);
-    } else {
-      toast?.error("Error starting workout.");
-    }
-    setLoading(false);
-  };
-
-  const handleCancelSpontaneous = async () => {
-    if (!workoutId) return;
-    
-    setLoading(true);
-    setIsCancelModalOpen(false);
-    await supabase.from('exercises').delete().eq('workout_id', workoutId);
-    await supabase.from('workouts').delete().eq('id', workoutId);
-    
-    setWorkoutId(null);
-    setExercises([]);
-    setRoutineName('No Template');
-    fetchTodayWorkout();
-  };
-
-  const handleStartSecondWorkout = async () => {
-    setIsTodayCompleted(false);
-    await handleStartSpontaneous();
-  };
-
-  const handleUndo = async () => {
-    if (!completedWorkoutId) return;
-    setLoading(true);
-
-    try {
-      // 1. Fetch exercises to calculate XP to subtract
-      const { data: pastExercises } = await supabase
-        .from('exercises')
-        .select('weight, reps, sets')
-        .eq('workout_id', completedWorkoutId);
-
-      let totalVolume = 0;
-      if (pastExercises) {
-        pastExercises.forEach(ex => {
-          totalVolume += (ex.sets * (parseInt(ex.reps) || 0) * ex.weight);
-        });
-      }
-      const xpToSubtract = calculateXpGained(totalVolume);
-
-      // 2. Subtract XP
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('xp, level')
-        .eq('id', session.user.id)
-        .single();
-
-      if (profile) {
-        const newXp = Math.max(0, profile.xp - xpToSubtract);
-        const newLevel = calculateLevelFromXp(newXp);
-        await supabase.from('profiles').update({ xp: newXp, level: newLevel }).eq('id', session.user.id);
-      }
-
-      // 3. Delete historical records
-      await supabase.from('exercises').delete().eq('workout_id', completedWorkoutId);
-      await supabase.from('workouts').delete().eq('id', completedWorkoutId);
-
-      // 4. Reset state and reload template
-      setIsTodayCompleted(false);
-      setCompletedWorkoutId(null);
-      toast?.success("Workout undone. You can now edit your exercises.");
-      await fetchTodayWorkout();
-    } catch (error) {
-      console.error(error);
-      toast?.error("Failed to undo workout.");
-      setLoading(false);
-    }
-  };
-
-  const handleAddExercise = async (e) => {
+  const handleAddExercise = (e) => {
     e.preventDefault();
-    if (!newExercise.name || !workoutId) return;
+    if (!newExercise.name.trim()) return;
 
-    setAddingExercise(true);
-
-    const exerciseData = {
-      workout_id: workoutId,
-      name: newExercise.name,
+    const added = toLocalExercise({
+      name: newExercise.name.trim(),
       sets: parseInt(newExercise.sets) || 0,
       reps: newExercise.reps || '0',
       weight: parseFloat(newExercise.weight) || 0,
       minutes: parseInt(newExercise.minutes) || 0,
-      completed: false
-    };
-
-    const { data: inserted, error } = await supabase
-      .from('exercises')
-      .insert([exerciseData])
-      .select()
-      .single();
-
-    if (!error && inserted) {
-      const drafts = {};
-      const setsCount = parseInt(inserted.sets) || 0;
-      for (let i = 0; i < setsCount; i++) {
-        drafts[i] = { reps: inserted.reps, weight: inserted.weight };
-      }
-      setExercises([...exercises, { ...inserted, set_drafts: drafts }]);
-      setNewExercise({ name: '', sets: '', reps: '', weight: '', minutes: '' });
-    } else {
-      toast?.error("Error adding exercise.");
-    }
-
-    setAddingExercise(false);
-  };
-
-  const toggleComplete = async (id, currentStatus) => {
-    const targetEx = exercises.find(e => e.id === id);
-    if (!targetEx) return;
-
-    let payload = { completed: !currentStatus };
-
-    // If completing the exercise via the big circle, save all set drafts into logged_sets
-    if (!currentStatus) {
-      const newLoggedSets = { ...(targetEx.logged_sets || {}) };
-      const setsCount = parseInt(targetEx.sets) || 0;
-      let maxWeight = parseFloat(targetEx.weight) || 0;
-
-      for (let i = 0; i < setsCount; i++) {
-        if (!newLoggedSets[i]) {
-          newLoggedSets[i] = { ...(targetEx.set_drafts?.[i] || { reps: targetEx.reps, weight: targetEx.weight }) };
-        }
-        const setWeight = parseFloat(newLoggedSets[i].weight) || 0;
-        if (setWeight > maxWeight) maxWeight = setWeight;
-      }
-      payload.logged_sets = newLoggedSets;
-      if (maxWeight > (parseFloat(targetEx.weight) || 0)) {
-        payload.weight = maxWeight;
-      }
-    } else {
-      // Unchecking the big circle should uncheck all individual sets
-      payload.logged_sets = null;
-    }
-
-    const { error } = await supabase
-      .from('exercises')
-      .update(payload)
-      .eq('id', id);
-
-    if (!error) {
-      // Update template completed_at to prevent stale reset
-      await supabase.from('workouts').update({ completed_at: new Date().toISOString() }).eq('id', workoutId);
-      
-      setExercises(exercises.map(ex =>
-        ex.id === id ? { ...ex, ...payload } : ex
-      ));
-    }
-  };
-
-  const toggleSet = async (exId, setIndex) => {
-    const targetEx = exercises.find(e => e.id === exId);
-    if (!targetEx) return;
-
-    const loggedSets = targetEx.logged_sets || {};
-    const isCompleted = !!loggedSets[setIndex];
-    
-    let newLoggedSets = { ...loggedSets };
-    if (isCompleted) {
-      delete newLoggedSets[setIndex];
-    } else {
-      newLoggedSets[setIndex] = { ...(targetEx.set_drafts?.[setIndex] || { reps: targetEx.reps, weight: targetEx.weight }) };
-    }
-    
-    const completedCount = Object.keys(newLoggedSets).length;
-    let newCompletedStatus = targetEx.completed;
-    
-    if (!isCompleted && completedCount === (parseInt(targetEx.sets) || 0)) {
-       newCompletedStatus = true;
-    } else if (isCompleted && targetEx.completed) {
-       newCompletedStatus = false;
-    }
-
-    let payload = { completed: newCompletedStatus, logged_sets: newLoggedSets };
-    let maxWeight = parseFloat(targetEx.weight) || 0;
-    
-    Object.values(newLoggedSets).forEach(set => {
-      const w = parseFloat(set.weight) || 0;
-      if (w > maxWeight) maxWeight = w;
     });
+    updateWorkout(w => ({ ...w, exercises: [...w.exercises, added] }));
+    setNewExercise({ name: '', sets: '', reps: '', weight: '', minutes: '' });
+  };
 
-    if (maxWeight > (parseFloat(targetEx.weight) || 0)) {
-      payload.weight = maxWeight;
+  // The big circle: completing fills every set from its drafts, unchecking clears them
+  const toggleComplete = (key) => updateExercise(key, ex => {
+    if (ex.completed) return { ...ex, completed: false, logged_sets: null };
+    const logged = { ...(ex.logged_sets || {}) };
+    for (let i = 0; i < (parseInt(ex.sets) || 0); i++) {
+      logged[i] ??= { ...(ex.set_drafts?.[i] || { reps: ex.reps, weight: ex.weight }) };
     }
+    return withTopWeight({ ...ex, completed: true, logged_sets: logged });
+  });
 
-    await supabase.from('exercises').update(payload).eq('id', exId);
-    await supabase.from('workouts').update({ completed_at: new Date().toISOString() }).eq('id', workoutId);
+  const toggleSet = (key, setIndex) => updateExercise(key, ex => {
+    const logged = { ...(ex.logged_sets || {}) };
+    const wasDone = !!logged[setIndex];
+    if (wasDone) delete logged[setIndex];
+    else logged[setIndex] = { ...(ex.set_drafts?.[setIndex] || { reps: ex.reps, weight: ex.weight }) };
 
-    setExercises(exercises.map(ex => {
-      if (ex.id === exId) {
-        return { ...ex, ...payload };
-      }
-      return ex;
-    }));
-  };
+    const allSetsDone = Object.keys(logged).length === (parseInt(ex.sets) || 0);
+    return withTopWeight({ ...ex, completed: wasDone ? false : (allSetsDone || ex.completed), logged_sets: logged });
+  });
 
-  const handleSetDraftChange = (exId, setIndex, field, value) => {
-    setExercises(exercises.map(ex => {
-      if (ex.id === exId) {
-         const newDrafts = { ...(ex.set_drafts || {}) };
-         newDrafts[setIndex] = { ...newDrafts[setIndex], [field]: value };
-         return { ...ex, set_drafts: newDrafts };
-      }
-      return ex;
-    }));
-  };
+  const handleSetDraftChange = (key, setIndex, field, value) => updateExercise(key, ex => ({
+    ...ex,
+    set_drafts: { ...(ex.set_drafts || {}), [setIndex]: { ...ex.set_drafts?.[setIndex], [field]: value } },
+  }));
 
-  const handleLocalChange = (id, field, value) => {
-    setExercises(exercises.map(ex => ex.id === id ? { ...ex, [field]: value } : ex));
-  };
+  // Showing or hiding the set rows is only a view change, so it doesn't start the workout
+  const handleLocalChange = (key, field, value) => updateExercise(
+    key,
+    ex => ({ ...ex, [field]: value }),
+    { activity: field !== 'is_tracking_sets' }
+  );
 
-  const handleBlurSave = async (id, field, value) => {
-    let finalValue = value;
-    if (field === 'sets' || field === 'minutes') finalValue = parseInt(value) || 0;
-    if (field === 'weight') finalValue = parseFloat(value) || 0;
-
-    await supabase.from('exercises').update({ [field]: finalValue }).eq('id', id);
-    if (workoutId) {
-      await supabase.from('workouts').update({ completed_at: new Date().toISOString() }).eq('id', workoutId);
-    }
-  };
-
-  const finishWorkout = async () => {
-    if (!allDone) return;
-    
+  const finishWorkout = () => {
+    if (!allDone || finishing) return;
     setFinishing(true);
 
-    const { error: wError, data: newWorkout } = await supabase
-      .from('workouts')
-      .insert([{
-        user_id: session.user.id,
-        day_of_week: today,
-        routine_name: routineName,
-        completed: true,
-        completed_at: new Date()
-      }])
-      .select()
-      .single();
+    const now = new Date();
+    const startedAt = new Date(workout.startedAt ?? now);
+    const completedAt = workoutCompletedAt(workout.startedAt, workout.lastActivityAt, now);
 
-    if (wError || !newWorkout) {
-      toast?.error("Error finishing workout. Please try again.");
-      setFinishing(false);
-      return;
-    }
-
-    if (exercises.length > 0) {
-      const completedExercises = exercises.map(ex => ({
-        workout_id: newWorkout.id,
+    const op = {
+      clientId: crypto.randomUUID(),
+      templateId: workout.templateId,
+      routineName,
+      dayOfWeek: DAYS[startedAt.getDay()],
+      completedAt: completedAt.toISOString(),
+      exercises: exercises.map(ex => ({
+        template_exercise_id: ex.template_exercise_id,
         name: ex.name,
         sets: parseInt(ex.sets) || 0,
-        reps: ex.reps || '0',
+        reps: String(ex.reps ?? '') || '0',
         weight: parseFloat(ex.weight) || 0,
         minutes: parseInt(ex.minutes) || 0,
         logged_sets: ex.logged_sets || null,
-        completed: true
-      }));
-      await supabase.from('exercises').insert(completedExercises);
-    }
-
-    // --- GAMIFICATION: XP & LEVELING ---
-    let totalVolume = 0;
-    exercises.forEach(ex => {
-      if (ex.logged_sets && Object.keys(ex.logged_sets).length > 0) {
-        Object.values(ex.logged_sets).forEach(set => {
-          let reps = 0;
-          if (typeof set.reps === 'string') {
-            const match = set.reps.match(/\d+/);
-            if (match) reps = parseInt(match[0]);
-          } else {
-            reps = parseInt(set.reps) || 0;
-          }
-          const weight = parseFloat(set.weight) || 0;
-          totalVolume += (reps * weight);
-        });
-      } else {
-        let reps = 0;
-        if (typeof ex.reps === 'string') {
-          const match = ex.reps.match(/\d+/);
-          if (match) reps = parseInt(match[0]);
-        } else {
-          reps = parseInt(ex.reps) || 0;
-        }
-        const weight = parseFloat(ex.weight) || 0;
-        const sets = parseInt(ex.sets) || 0;
-        totalVolume += (sets * reps * weight);
-      }
-    });
-    
-    const xpGained = calculateXpGained(totalVolume);
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('xp, level')
-      .eq('id', session.user.id)
-      .single();
-      
-    const currentXp = profile?.xp || 0;
-    const newXp = currentXp + xpGained;
-    const newLevel = calculateLevelFromXp(newXp);
-
-    await supabase.from('profiles').update({ xp: newXp, level: newLevel }).eq('id', session.user.id);
-
-    // --- GAMIFICATION: PR CHECK ---
-    let prsHit = [];
-    
-    await Promise.all(exercises.map(async (ex) => {
-      if (!ex.name || !ex.weight || ex.weight <= 0) return;
-      
-      const { data: pastEx } = await supabase
-        .from('exercises')
-        .select('weight, workouts!inner(user_id)')
-        .ilike('name', ex.name)
-        .eq('workouts.user_id', session.user.id)
-        .lt('created_at', ex.created_at || new Date().toISOString()) 
-        .order('weight', { ascending: false })
-        .limit(1);
-
-      const pastMax = pastEx && pastEx.length > 0 ? parseFloat(pastEx[0].weight) : 0;
-      
-      if (parseFloat(ex.weight) > pastMax && pastMax > 0) {
-        prsHit.push({ name: ex.name, weight: ex.weight });
-      }
-    }));
-
-    // --- GAMIFICATION: ACHIEVEMENTS CHECK ---
-    const { data: allWorkouts } = await supabase.from('workouts').select('completed, completed_at').eq('user_id', session.user.id).eq('completed', true);
-    
-    // We haven't fetched rest days or freezes here, but for simple achievements, we can just use total workouts.
-    // To be precise on streak, we can just pass an empty set for freezes and rest days.
-    const streak = calculateStreak(allWorkouts || [], new Set(), 3);
-    
-    const stats = {
-      totalWorkouts: (allWorkouts?.length || 0),
-      currentStreak: streak,
-      level: newLevel,
-      maxVolume: totalVolume
+      })),
     };
 
-    const { data: existingAchievements } = await supabase.from('achievements').select('badge_name').eq('user_id', session.user.id);
-    const earnedAchievements = getEarnedAchievements(stats, existingAchievements || []);
-
-    if (earnedAchievements.length > 0) {
-      await supabase.from('achievements').insert(
-        earnedAchievements.map(ach => ({
-          user_id: session.user.id,
-          badge_name: ach.badge_name,
-          description: ach.description
-        }))
-      );
-      
-      earnedAchievements.forEach(ach => {
-         setTimeout(() => toast?.success(`🏅 Achievement Unlocked: ${ach.badge_name}!`), 1000);
-      });
-    }
-
-    // Add to Activity Feed
-    const cleanRoutineName = routineName.toLowerCase().includes('workout') ? routineName : `${routineName} workout`;
-    let feedAction = `crushed their ${cleanRoutineName}! (+${xpGained} XP)`;
-    if (prsHit.length > 0) {
-      const prText = prsHit.map(pr => `${pr.name} (${pr.weight}kg)`).join(', ');
-      feedAction = `hit a PR on ${prText}! (+${xpGained} XP)`;
-      setPrMessages(prsHit);
-      setShowConfetti(true);
-      setTimeout(() => setShowConfetti(false), 5000);
-    } else if (earnedAchievements.length > 0) {
-      feedAction = `earned the ${earnedAchievements[0].badge_name} badge! (+${xpGained} XP)`;
-      setShowConfetti(true);
-      setTimeout(() => setShowConfetti(false), 5000);
-    }
-
-    await supabase.from('activity_feed').insert([{
-      user_id: session.user.id,
-      action: feedAction
-    }]);
-
-    // Uncheck all exercises on the template so it's ready for next week
-    if (routineName === 'Spontaneous Workout' && workoutId) {
-      await supabase.from('workouts').delete().eq('id', workoutId);
-      setWorkoutId(null);
-      setExercises([]);
-      setRoutineName('No Template');
-    } else {
-      await Promise.all(exercises.map(async (ex) => {
-        if (ex.completed) {
-          await supabase.from('exercises').update({ completed: false, logged_sets: null }).eq('id', ex.id);
-        }
-      }));
-      setExercises(exercises.map(ex => ({ ...ex, completed: false, logged_sets: null })));
-    }
-    
-    setIsTimerRunning(false);
-    setTimerSeconds(0);
+    // Queue first, then clear the session, so the workout is never only in memory
+    enqueueWorkout(userId, op);
+    writeStore(userId, 'lastFinished', { clientId: op.clientId, completedAt: op.completedAt, session: workout });
+    writeStore(userId, 'session', null);
+    pendingFinishId.current = op.clientId;
+    resetTimer();
     setFinishing(false);
 
-    toast?.success(`🎉 ${routineName} workout logged! Great work!`);
-    
-    // Refresh the page state to show the "Already Completed" screen
-    fetchTodayWorkout();
+    const savedTo = isSameDay(completedAt, now) ? '' : ` to ${op.dayOfWeek}`;
+    toast?.success(navigator.onLine
+      ? `🎉 ${routineName} saved${savedTo}! Great work!`
+      : `🎉 ${routineName} saved${savedTo} on your phone. It'll upload when you have signal.`);
+
+    if (!session.offline) flushOutbox(userId);
+    showFromStore();
   };
 
   const completedCount = exercises.filter(ex => ex.completed).length;
   const allDone = exercises.length > 0 && completedCount === exercises.length;
+  const startedEarlierDay = workout.startedAt && !isSameDay(workout.startedAt, new Date());
 
   return (
     <div className="flex-col gap-5 stagger-children" style={{ display: 'flex', position: 'relative' }}>
-      
+
       {showConfetti && (
         <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.8)' }}>
           <div className="card" style={{ textAlign: 'center', animation: 'scaleIn 0.3s ease-out' }}>
             <Trophy size={64} style={{ color: '#ffd700', margin: '0 auto var(--space-4)' }} />
-            <h2 style={{ fontSize: '2rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 'var(--space-2)' }}>NEW PR!</h2>
+            <h2 style={{ fontSize: '2rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 'var(--space-2)' }}>
+              {prMessages.length > 0 ? 'NEW PR!' : 'BADGE UNLOCKED!'}
+            </h2>
             <p style={{ color: 'var(--text-secondary)', fontSize: '1.125rem' }}>
               {prMessages.map(pr => `${pr.name}: ${pr.weight}kg`).join(' • ')}
             </p>
@@ -671,18 +423,24 @@ export default function Workouts({ session }) {
             <p className="empty-state-text" style={{ maxWidth: '320px', margin: '0 auto' }}>
               You've already crushed your workout for today. Rest up and come back stronger tomorrow!
             </p>
-            
+
             <div className="flex gap-4 justify-center" style={{ marginTop: 'var(--space-8)', flexWrap: 'wrap' }}>
               <button onClick={handleUndo} className="btn btn-secondary">
                 <Undo2 size={18} /> Undo Last Workout
               </button>
-              <button onClick={handleStartSecondWorkout} className="btn btn-primary">
+              <button onClick={handleStartSpontaneous} className="btn btn-primary">
                 <Plus size={18} /> Start Another
               </button>
             </div>
           </div>
         ) : (
           <>
+            {startedEarlierDay && (
+              <div style={{ marginBottom: 'var(--space-4)', padding: 'var(--space-3) var(--space-4)', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--accent-soft)', color: 'var(--text-primary)', fontSize: '0.875rem' }}>
+                Unfinished workout from {DAYS[new Date(workout.startedAt).getDay()]}. Finishing it saves it to that day.
+              </div>
+            )}
+
             {/* Routine Header + Progress Ring */}
             <div className="flex items-center justify-between mb-6" style={{ paddingBottom: 'var(--space-4)', borderBottom: '1px solid var(--divider)' }}>
               <div>
@@ -692,30 +450,32 @@ export default function Workouts({ session }) {
                     {completedCount} of {exercises.length} exercises completed
                   </p>
                 )}
-                
+
                 {/* Timer UI */}
                 {!isRestDay && (
                   <div className="flex items-center gap-3 mt-3">
-                    <span style={{ 
-                      fontSize: '1.25rem', 
-                      fontWeight: 700, 
+                    <span style={{
+                      fontSize: '1.25rem',
+                      fontWeight: 700,
                       color: isTimerRunning ? 'var(--accent)' : 'var(--text-secondary)',
-                      fontVariantNumeric: 'tabular-nums' 
+                      fontVariantNumeric: 'tabular-nums'
                     }}>
                       {formatTime(timerSeconds)}
                     </span>
-                    <button 
-                      onClick={() => setIsTimerRunning(!isTimerRunning)} 
-                      className={`btn-icon ${isTimerRunning ? 'btn-secondary' : 'btn-primary'}`} 
+                    <button
+                      onClick={toggleTimer}
+                      className={`btn-icon ${isTimerRunning ? 'btn-secondary' : 'btn-primary'}`}
                       style={{ width: '32px', height: '32px', borderRadius: '50%' }}
+                      aria-label={isTimerRunning ? 'Pause timer' : 'Start timer'}
                     >
                       {isTimerRunning ? <Square size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" style={{ marginLeft: '2px' }} />}
                     </button>
                     {!isTimerRunning && timerSeconds > 0 && (
-                      <button 
-                        onClick={() => setTimerSeconds(0)} 
-                        className="btn-icon btn-ghost" 
+                      <button
+                        onClick={resetTimer}
+                        className="btn-icon btn-ghost"
                         style={{ width: '32px', height: '32px', color: 'var(--text-tertiary)' }}
+                        aria-label="Reset timer"
                       >
                         <TimerReset size={16} />
                       </button>
@@ -747,7 +507,7 @@ export default function Workouts({ session }) {
                   </div>
                 </div>
               </div>
-            ) : !workoutId ? (
+            ) : !hasWorkout ? (
               <div className="empty-state">
                 <Dumbbell size={36} className="empty-state-icon" />
                 <p className="empty-state-title">No exercises planned</p>
@@ -767,13 +527,14 @@ export default function Workouts({ session }) {
                   <div className="flex-col" style={{ display: 'flex' }}>
                     {exercises.map(ex => (
                     <div
-                      key={ex.id}
+                      key={ex.key}
                       className="exercise-row"
                       style={{ opacity: ex.completed ? 0.5 : 1 }}
                     >
                       <button
-                         onClick={() => toggleComplete(ex.id, ex.completed)}
+                         onClick={() => toggleComplete(ex.key)}
                          className={`exercise-check ${ex.completed ? 'checked' : ''}`}
+                         aria-label={`Mark ${ex.name} ${ex.completed ? 'not done' : 'done'}`}
                        >
                          <Check size={16} />
                        </button>
@@ -806,9 +567,9 @@ export default function Workouts({ session }) {
                                   <input
                                     type="text"
                                     value={ex.reps}
-                                    onChange={e => handleLocalChange(ex.id, 'reps', e.target.value)}
-                                    onBlur={e => handleBlurSave(ex.id, 'reps', e.target.value)}
+                                    onChange={e => handleLocalChange(ex.key, 'reps', e.target.value)}
                                     className="exercise-inline-input"
+                                    aria-label={`${ex.name} reps`}
                                   />
                                   <span>Reps</span>
                                 </div>
@@ -818,10 +579,10 @@ export default function Workouts({ session }) {
                                     type="number"
                                     step="0.5"
                                     value={ex.weight}
-                                    onChange={e => handleLocalChange(ex.id, 'weight', e.target.value)}
-                                    onBlur={e => handleBlurSave(ex.id, 'weight', e.target.value)}
+                                    onChange={e => handleLocalChange(ex.key, 'weight', e.target.value)}
                                     className="exercise-inline-input"
                                     style={{ width: '50px' }}
+                                    aria-label={`${ex.name} weight in kg`}
                                   />
                                   <span>kg</span>
                                 </div>
@@ -831,7 +592,7 @@ export default function Workouts({ session }) {
                             {/* Toggle Button for Set-by-Set Tracking */}
                             {ex.sets > 0 && (
                               <button
-                                onClick={() => handleLocalChange(ex.id, 'is_tracking_sets', !ex.is_tracking_sets)}
+                                onClick={() => handleLocalChange(ex.key, 'is_tracking_sets', !ex.is_tracking_sets)}
                                 style={{
                                   marginLeft: 'auto',
                                   fontSize: '0.75rem',
@@ -859,10 +620,10 @@ export default function Workouts({ session }) {
                               {Array.from({ length: parseInt(ex.sets) || 0 }).map((_, i) => {
                                 const isSetCompleted = !!(ex.logged_sets && ex.logged_sets[i]);
                                 const draft = ex.set_drafts?.[i] || { reps: ex.reps, weight: ex.weight };
-                                
+
                                 return (
-                                  <div key={i} style={{ 
-                                    display: 'flex', 
+                                  <div key={i} style={{
+                                    display: 'flex',
                                     justifyContent: 'space-between',
                                     alignItems: 'center',
                                     backgroundColor: isSetCompleted ? 'var(--bg-surface)' : 'var(--bg-elevated)',
@@ -873,41 +634,44 @@ export default function Workouts({ session }) {
                                     <div style={{ fontWeight: 600, fontSize: '0.75rem', color: 'var(--text-tertiary)', width: '40px' }}>
                                       SET {i + 1}
                                     </div>
-                                    
+
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                                       <div className="flex items-center gap-1">
                                         <input
                                           type="text"
                                           value={isSetCompleted ? (ex.logged_sets[i].reps) : draft.reps}
-                                          onChange={e => handleSetDraftChange(ex.id, i, 'reps', e.target.value)}
+                                          onChange={e => handleSetDraftChange(ex.key, i, 'reps', e.target.value)}
                                           disabled={isSetCompleted}
                                           className="exercise-inline-input"
                                           style={{ width: '45px', textAlign: 'center', backgroundColor: isSetCompleted ? 'transparent' : 'var(--bg-surface)', padding: '2px 4px' }}
+                                          aria-label={`Set ${i + 1} reps`}
                                         />
                                         <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Reps</span>
                                       </div>
-                                      
+
                                       <div className="flex items-center gap-1">
                                         <input
                                           type="number"
                                           step="0.5"
                                           value={isSetCompleted ? (ex.logged_sets[i].weight) : draft.weight}
-                                          onChange={e => handleSetDraftChange(ex.id, i, 'weight', e.target.value)}
+                                          onChange={e => handleSetDraftChange(ex.key, i, 'weight', e.target.value)}
                                           disabled={isSetCompleted}
                                           className="exercise-inline-input"
                                           style={{ width: '50px', textAlign: 'center', backgroundColor: isSetCompleted ? 'transparent' : 'var(--bg-surface)', padding: '2px 4px' }}
+                                          aria-label={`Set ${i + 1} weight in kg`}
                                         />
                                         <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>kg</span>
                                       </div>
                                     </div>
-                                    
+
                                     <button
-                                      onClick={() => toggleSet(ex.id, i)}
+                                      onClick={() => toggleSet(ex.key, i)}
+                                      aria-label={`Mark set ${i + 1} ${isSetCompleted ? 'not done' : 'done'}`}
                                       style={{
                                         width: '24px',
                                         height: '24px',
                                         borderRadius: '50%',
-                                        display: 'flex', 
+                                        display: 'flex',
                                         alignItems: 'center',
                                         justifyContent: 'center',
                                         backgroundColor: isSetCompleted ? 'var(--accent)' : 'transparent',
@@ -992,8 +756,8 @@ export default function Workouts({ session }) {
                         style={{ width: '100%', padding: '0.5rem', backgroundColor: 'var(--bg-elevated)' }}
                       />
                     </div>
-                    <button type="submit" className="btn btn-primary" disabled={addingExercise} style={{ padding: '0.5rem', height: '36px' }}>
-                      {addingExercise ? <Loader2 size={18} className="animate-spin" /> : <span style={{ fontWeight: 'bold' }}>+</span>}
+                    <button type="submit" className="btn btn-primary" style={{ padding: '0.5rem', height: '36px' }} aria-label="Add exercise">
+                      <span style={{ fontWeight: 'bold' }}>+</span>
                     </button>
                   </form>
                 </div>
@@ -1018,8 +782,8 @@ export default function Workouts({ session }) {
                        </>
                      )}
                    </button>
-                   
-                   {routineName === 'Spontaneous Workout' && (
+
+                   {workout.startedAt && (
                      <button
                        onClick={() => setIsCancelModalOpen(true)}
                        className="btn btn-secondary btn-lg finish-cta"
@@ -1048,16 +812,16 @@ export default function Workouts({ session }) {
                <h2 style={{ fontSize: '1.25rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
                  Cancel Workout
                </h2>
-               <button onClick={() => setIsCancelModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
+               <button onClick={() => setIsCancelModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }} aria-label="Close">
                  <X size={20} />
                </button>
              </div>
              <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-4)', fontSize: '0.875rem', lineHeight: 1.5 }}>
-               Are you sure you want to cancel this spontaneous workout? All logged sets and progress for this session will be permanently deleted.
+               Are you sure you want to cancel this workout? All logged sets and changes from this session will be deleted. Your plan stays as it is.
              </p>
              <div className="flex gap-2">
                <button onClick={() => setIsCancelModalOpen(false)} className="btn btn-secondary" style={{ flex: 1 }}>No, Keep It</button>
-               <button onClick={handleCancelSpontaneous} className="btn" style={{ flex: 1, backgroundColor: 'var(--error)', color: 'white' }}>
+               <button onClick={handleDiscard} className="btn" style={{ flex: 1, backgroundColor: 'var(--error)', color: 'white' }}>
                  Yes, Cancel
                </button>
              </div>

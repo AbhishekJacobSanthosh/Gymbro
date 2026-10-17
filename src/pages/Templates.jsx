@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Dumbbell, Coffee, Edit3, Save, Check, Loader2, GripVertical } from 'lucide-react';
+import { Plus, Trash2, Dumbbell, Coffee, Edit3, Save, Loader2, GripVertical } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -62,7 +62,14 @@ export default function Templates({ session }) {
 
   const fetchPastExercises = async () => {
     if (!session?.user) return;
-    const { data } = await supabase.from('exercises').select('name').neq('name', '');
+    // Newest first so the 1000-row API cap drops the oldest names, not recent ones
+    const { data } = await supabase
+      .from('exercises')
+      .select('name, workouts!inner(user_id)')
+      .eq('workouts.user_id', session.user.id)
+      .neq('name', '')
+      .order('created_at', { ascending: false })
+      .limit(1000);
     if (data) {
       setPastExercises([...new Set(data.map(d => d.name))]);
     }

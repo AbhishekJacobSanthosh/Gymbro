@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useCallback, createContext, useContext } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, createContext, useContext } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
-import { Home, Dumbbell, Calendar as CalendarIcon, LogOut, ClipboardList, User, CheckCircle, AlertCircle, Info } from 'lucide-react';
+import { Home, Dumbbell, Calendar as CalendarIcon, LogOut, ClipboardList, User, CheckCircle, AlertCircle, Info, CloudOff } from 'lucide-react';
+import { isAuthRetryableFetchError } from '@supabase/supabase-js';
 import { supabase } from './lib/supabase';
+import { getQueued, getFailed, flushOutbox, retryFailed, confirmSignOut } from './lib/offline';
 import './App.css';
 
 // Pages
@@ -35,11 +37,11 @@ function ToastProvider({ children }) {
   }, []);
 
   // Make toast callable as toast.success(), etc.
-  const toastApi = {
+  const toastApi = useMemo(() => ({
     success: (msg) => addToast(msg, 'success'),
     error: (msg) => addToast(msg, 'error'),
     info: (msg) => addToast(msg, 'info'),
-  };
+  }), [addToast]);
 
   const icons = {
     success: <CheckCircle size={16} />,
@@ -121,6 +123,64 @@ function PageWrapper({ children }) {
 }
 
 
+// ---- Offline sync: uploads finished workouts and shows what is still waiting ----
+function SyncStatus({ userId, online }) {
+  const toast = useToast();
+  const [pending, setPending] = useState(() => ({ queued: getQueued(userId).length, failed: getFailed(userId).length }));
+
+  useEffect(() => {
+    const update = () => setPending({ queued: getQueued(userId).length, failed: getFailed(userId).length });
+    update();
+    window.addEventListener('gymbro:outbox', update);
+    return () => window.removeEventListener('gymbro:outbox', update);
+  }, [userId]);
+
+  // Upload on open, when signal comes back, and when the app returns to the foreground
+  useEffect(() => {
+    if (!online) return;
+    const flush = () => flushOutbox(userId);
+    const onVisible = () => { if (document.visibilityState === 'visible') flush(); };
+    flush();
+    window.addEventListener('online', flush);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('online', flush);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [userId, online]);
+
+  useEffect(() => {
+    const onSynced = (e) => {
+      const { routineName, xpGained, earnedAchievements } = e.detail;
+      toast.success(`☁️ ${routineName} synced! +${xpGained} XP`);
+      earnedAchievements.forEach(ach => {
+        setTimeout(() => toast.success(`🏅 Achievement Unlocked: ${ach.badge_name}!`), 1000);
+      });
+    };
+    window.addEventListener('gymbro:synced', onSynced);
+    return () => window.removeEventListener('gymbro:synced', onSynced);
+  }, [toast]);
+
+  if (pending.queued === 0 && pending.failed === 0) return null;
+
+  const plural = (n) => `${n} workout${n === 1 ? '' : 's'}`;
+  return (
+    <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap', marginBottom: 'var(--space-4)', padding: 'var(--space-3) var(--space-4)', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border)', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+      <CloudOff size={16} />
+      {pending.queued > 0 && (
+        <span>{plural(pending.queued)} waiting to sync{online ? '' : ". It'll upload when you have signal"}.</span>
+      )}
+      {pending.failed > 0 && (
+        <>
+          <span style={{ color: 'var(--error)' }}>{plural(pending.failed)} couldn't sync.</span>
+          <button className="btn btn-secondary btn-sm" onClick={() => retryFailed(userId)} disabled={!online}>Retry</button>
+        </>
+      )}
+    </div>
+  );
+}
+
+
 // ---- Loading Screen ----
 function LoadingScreen() {
   return (
@@ -137,26 +197,60 @@ function LoadingScreen() {
 
 
 // ---- App ----
+// The last signed-in user, so the app still opens offline after the login token expires
+const LAST_USER_KEY = 'gymbro:lastUser';
+function readLastUser() {
+  try { return JSON.parse(localStorage.getItem(LAST_USER_KEY)); } catch { return null; }
+}
+function writeLastUser(user) {
+  try {
+    if (user) localStorage.setItem(LAST_USER_KEY, JSON.stringify({ id: user.id, email: user.email }));
+    else localStorage.removeItem(LAST_USER_KEY);
+  } catch { /* storage unavailable: offline start just won't work */ }
+}
+
 function App() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
+    const restore = async () => {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      if (session) {
+        setSession(session);
+      } else if (isAuthRetryableFetchError(error)) {
+        // Offline with an expired login: Supabase keeps the refresh token, so stay signed in
+        // with the cached user and refresh once signal is back
+        const user = readLastUser();
+        setSession(user ? { user, offline: true } : null);
+      } else {
+        setSession(null);
+      }
       setLoading(false);
-    });
+    };
+    restore();
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session) {
+        setSession(session);
+        writeLastUser(session.user);
+      } else if (event === 'SIGNED_OUT') {
+        setSession(null);
+        writeLastUser(null);
+      }
     });
 
-    return () => subscription.unsubscribe();
+    window.addEventListener('online', restore);
+    return () => {
+      subscription.unsubscribe();
+      window.removeEventListener('online', restore);
+    };
   }, []);
 
   const handleLogout = async () => {
+    if (!confirmSignOut(session.user.id)) return;
     await supabase.auth.signOut();
   };
 
@@ -178,6 +272,7 @@ function App() {
         <div className="app-container">
           <Sidebar onLogout={handleLogout} />
           <main className="main-content">
+            <SyncStatus userId={session.user.id} online={!session.offline} />
             <PageWrapper>
               <Routes>
                 <Route path="/" element={<HomePage session={session} />} />

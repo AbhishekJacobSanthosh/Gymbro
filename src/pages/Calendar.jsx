@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Flame, Loader2, X, Check } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../App';
-import { calculateStreak, calculateXpGained, calculateLevelFromXp, getEarnedAchievements } from '../lib/utils';
+import { calculateStreak, getActiveTemplates, getRestDays } from '../lib/utils';
+import { submitWorkout } from '../lib/awardWorkout';
 
 let hasLoadedOnce = false;
 
@@ -88,26 +89,14 @@ export default function Calendar({ session }) {
       // Fetch active templates to determine rest days
       const { data: allTemplates } = await supabase
         .from('workouts')
-        .select('user_id, day_of_week, is_rest_day, created_at')
+        .select('user_id, day_of_week, is_rest_day, created_at, completed, routine_name')
         .eq('completed', false)
         .in('user_id', profileIds);
 
       const userRestDays = {};
-      profileIds.forEach(id => userRestDays[id] = new Set());
-
-      if (allTemplates) {
-        allTemplates.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-        const templatesByUserAndDay = {};
-        allTemplates.forEach(t => {
-          if (!templatesByUserAndDay[t.user_id]) templatesByUserAndDay[t.user_id] = {};
-          if (!templatesByUserAndDay[t.user_id][t.day_of_week]) {
-            templatesByUserAndDay[t.user_id][t.day_of_week] = t;
-            if (t.is_rest_day) {
-              userRestDays[t.user_id].add(t.day_of_week);
-            }
-          }
-        });
-      }
+      profileIds.forEach(id => {
+        userRestDays[id] = getRestDays(getActiveTemplates((allTemplates || []).filter(t => t.user_id === id)));
+      });
 
       // Process workouts into activityData map: { dayNumber: [userId, userId, ...] }
       let newActivityData = {};
@@ -136,7 +125,7 @@ export default function Calendar({ session }) {
 
       if (allWorkouts) {
         profileList.forEach(p => {
-          p.streak = calculateStreak(allWorkouts.filter(w => w.user_id === p.id), userRestDays[p.id], 3);
+          p.streak = calculateStreak(allWorkouts.filter(w => w.user_id === p.id), userRestDays[p.id], 3).streak;
           p.total = userTotals[p.id] || 0;
         });
       }
@@ -201,6 +190,7 @@ export default function Calendar({ session }) {
       .eq('user_id', session.user.id)
       .eq('day_of_week', dayOfWeekStr)
       .eq('completed', false)
+      .neq('routine_name', 'Spontaneous Workout')
       .order('created_at', { ascending: false })
       .limit(1);
 
@@ -246,140 +236,34 @@ export default function Calendar({ session }) {
     const localDate = new Date(selectedDate);
     localDate.setHours(12, 0, 0, 0);
 
-    // Save updated exercises (reps and weights for progressive overload) back to the template
-    await Promise.all(dayExercises.map(async (ex) => {
-      await supabase
-        .from('exercises')
-        .update({
-          reps: ex.reps,
+    // One transaction saves the workout, its exercises, the reps/weights back to the template, and XP
+    try {
+      const { earnedAchievements } = await submitWorkout(session.user.id, {
+        clientId: crypto.randomUUID(),
+        templateId: activeTemplate.id,
+        routineName: activeTemplate.routine_name || 'Workout',
+        dayOfWeek: activeTemplate.day_of_week,
+        completedAt: localDate.toISOString(),
+        retro: true,
+        exercises: dayExercises.map(ex => ({
+          template_exercise_id: ex.id,
+          name: ex.name,
+          sets: parseInt(ex.sets) || 0,
+          reps: ex.reps || '0',
           weight: parseFloat(ex.weight) || 0,
-          completed: false
-        })
-        .eq('id', ex.id);
-    }));
-
-    // Insert historical workout record
-    const { data: newWorkout, error: wError } = await supabase
-      .from('workouts')
-      .insert([{
-        user_id: session.user.id,
-        routine_name: activeTemplate.routine_name,
-        day_of_week: activeTemplate.day_of_week,
-        is_rest_day: activeTemplate.is_rest_day,
-        completed: true,
-        completed_at: localDate.toISOString()
-      }])
-      .select()
-      .single();
-
-    if (!wError && newWorkout && dayExercises.length > 0) {
-      const completedExercises = dayExercises.map(ex => ({
-        workout_id: newWorkout.id,
-        name: ex.name,
-        sets: parseInt(ex.sets) || 0,
-        reps: ex.reps || '0',
-        weight: parseFloat(ex.weight) || 0,
-        minutes: parseInt(ex.minutes) || 0,
-        completed: ex.completed
-      }));
-      await supabase.from('exercises').insert(completedExercises);
-    }
-
-    // --- GAMIFICATION: XP & LEVELING ---
-    let totalVolume = 0;
-    dayExercises.forEach(ex => {
-        let reps = 0;
-        if (typeof ex.reps === 'string') {
-          const match = ex.reps.match(/\d+/);
-          if (match) reps = parseInt(match[0]);
-        } else {
-          reps = parseInt(ex.reps) || 0;
-        }
-        const weight = parseFloat(ex.weight) || 0;
-        const sets = parseInt(ex.sets) || 0;
-        totalVolume += (sets * reps * weight);
-    });
-    
-    const xpGained = calculateXpGained(totalVolume);
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('xp, level')
-      .eq('id', session.user.id)
-      .single();
-      
-    const currentXp = profile?.xp || 0;
-    const newXp = currentXp + xpGained;
-    const newLevel = calculateLevelFromXp(newXp);
-
-    await supabase.from('profiles').update({ xp: newXp, level: newLevel }).eq('id', session.user.id);
-
-    // --- GAMIFICATION: PR CHECK ---
-    let prsHit = [];
-    
-    await Promise.all(dayExercises.map(async (ex) => {
-      if (!ex.name || !ex.weight || ex.weight <= 0) return;
-      
-      const { data: pastEx } = await supabase
-        .from('exercises')
-        .select('weight, workouts!inner(user_id)')
-        .ilike('name', ex.name)
-        .eq('workouts.user_id', session.user.id)
-        .order('weight', { ascending: false })
-        .limit(1);
-
-      const pastMax = pastEx && pastEx.length > 0 ? parseFloat(pastEx[0].weight) : 0;
-      
-      if (parseFloat(ex.weight) > pastMax && pastMax > 0) {
-        prsHit.push({ name: ex.name, weight: ex.weight });
-      }
-    }));
-
-    // --- GAMIFICATION: ACHIEVEMENTS CHECK ---
-    const { data: allWorkouts } = await supabase.from('workouts').select('completed, completed_at').eq('user_id', session.user.id).eq('completed', true);
-    
-    const streak = calculateStreak(allWorkouts || [], new Set(), 3);
-    
-    const stats = {
-      totalWorkouts: (allWorkouts?.length || 0),
-      currentStreak: streak,
-      level: newLevel,
-      maxVolume: totalVolume
-    };
-
-    const { data: existingAchievements } = await supabase.from('achievements').select('badge_name').eq('user_id', session.user.id);
-    const earnedAchievements = getEarnedAchievements(stats, existingAchievements || []);
-
-    if (earnedAchievements.length > 0) {
-      await supabase.from('achievements').insert(
-        earnedAchievements.map(ach => ({
-          user_id: session.user.id,
-          badge_name: ach.badge_name,
-          description: ach.description
+          minutes: parseInt(ex.minutes) || 0,
+          logged_sets: null
         }))
-      );
-      
+      });
       earnedAchievements.forEach(ach => {
          setTimeout(() => toast?.success(`🏅 Achievement Unlocked: ${ach.badge_name}!`), 1000);
       });
+    } catch (error) {
+      console.error(error);
+      toast?.error('Error logging workout. Please try again.');
+      setSaving(false);
+      return;
     }
-
-    // Add to Activity Feed
-    const routineName = activeTemplate?.routine_name || 'Workout';
-    const cleanRoutineName = routineName.toLowerCase().includes('workout') ? routineName : `${routineName} workout`;
-    let feedAction = `crushed a retroactive ${cleanRoutineName}! (+${xpGained} XP)`;
-    
-    if (prsHit.length > 0) {
-      const prText = prsHit.map(pr => `${pr.name} (${pr.weight}kg)`).join(', ');
-      feedAction = `hit a PR on ${prText} retroactively! (+${xpGained} XP)`;
-    } else if (earnedAchievements.length > 0) {
-      feedAction = `earned the ${earnedAchievements[0].badge_name} badge retroactively! (+${xpGained} XP)`;
-    }
-
-    await supabase.from('activity_feed').insert([{
-      user_id: session.user.id,
-      action: feedAction
-    }]);
 
     // Refresh Calendar
     await fetchCalendarData();

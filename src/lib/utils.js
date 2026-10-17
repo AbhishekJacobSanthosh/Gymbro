@@ -21,14 +21,7 @@ export function getRelativeTime(dateStr) {
 }
 
 // Gamification utilities
-export function calculateXpGained(totalVolume) {
-  return 50 + Math.floor(totalVolume / 100);
-}
-
-export function calculateLevelFromXp(xp) {
-  return Math.floor(Math.sqrt(xp / 100)) + 1;
-}
-
+// XP itself is calculated in the database (award_workout_xp); keep these formulas in sync with supabase_schema.sql.
 export function getLevelProgress(xp, level) {
   const currentLevelXp = Math.pow(level - 1, 2) * 100;
   const nextLevelXp = Math.pow(level, 2) * 100;
@@ -42,10 +35,55 @@ export function getLevelProgress(xp, level) {
   };
 }
 
-// Streak calculation logic shared between Home and Calendar
+// First number in a reps string: "8-10" -> 8, "x10" -> 10, "AMRAP" -> 0
+export function parseReps(reps) {
+  const match = String(reps ?? '').match(/\d+/);
+  return match ? parseInt(match[0]) : 0;
+}
+
+// Total kg moved. Logged sets win over the planned sets x reps x weight.
+export function calculateVolume(exercises) {
+  let total = 0;
+  for (const ex of exercises || []) {
+    const loggedSets = ex.logged_sets ? Object.values(ex.logged_sets) : [];
+    if (loggedSets.length > 0) {
+      loggedSets.forEach(set => { total += parseReps(set.reps) * (parseFloat(set.weight) || 0); });
+    } else {
+      total += (parseInt(ex.sets) || 0) * parseReps(ex.reps) * (parseFloat(ex.weight) || 0);
+    }
+  }
+  return total;
+}
+
+// When a finished workout is dated: the day it was started, even if Finish is pressed after midnight.
+// Past that day it uses the last time something was logged, capped at 23:59:59.999 of the start day.
+export function workoutCompletedAt(startedAt, lastActivityAt, now = new Date()) {
+  const start = new Date(startedAt ?? now);
+  const endOfStartDay = new Date(start);
+  endOfStartDay.setHours(23, 59, 59, 999);
+  if (now <= endOfStartDay) return new Date(now);
+  return new Date(Math.min(new Date(lastActivityAt ?? start).getTime(), endOfStartDay.getTime()));
+}
+
+// Newest template per weekday. Skips history and in-progress spontaneous workouts.
+export function getActiveTemplates(workouts) {
+  const byDay = {};
+  (workouts || [])
+    .filter(w => !w.completed && w.routine_name !== 'Spontaneous Workout')
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    .forEach(t => { byDay[t.day_of_week] ??= t; });
+  return byDay;
+}
+
+export function getRestDays(templatesByDay) {
+  return new Set(Object.values(templatesByDay).filter(t => t.is_rest_day).map(t => t.day_of_week));
+}
+
+// Streak calculation shared by every page.
+// shieldsUsed = shields spent this month on misses inside the current streak.
 export function calculateStreak(completedHistory, restDaysOfWeek, maxGracePeriodsPerMonth = 3) {
-  if (!completedHistory || completedHistory.length === 0) return 0;
-  
+  if (!completedHistory || completedHistory.length === 0) return { streak: 0, shieldsUsed: 0 };
+
   let streak = 0;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -60,6 +98,9 @@ export function calculateStreak(completedHistory, restDaysOfWeek, maxGracePeriod
 
   let gracePeriodsUsedThisMonth = 0;
   let currentMonth = today.getMonth();
+  let shieldsUsed = 0;
+  // Misses in this month that only count once an older completed day proves they sit inside the streak
+  let pendingShields = 0;
 
   for (let i = 0; i < 365; i++) {
     const time = currentCheckDate.getTime();
@@ -67,6 +108,7 @@ export function calculateStreak(completedHistory, restDaysOfWeek, maxGracePeriod
     const dayName = DAYS[currentCheckDate.getDay()];
     const isRestDay = restDaysOfWeek.has(dayName);
     const isToday = i === 0;
+    const isThisMonth = currentCheckDate.getMonth() === today.getMonth() && currentCheckDate.getFullYear() === today.getFullYear();
 
     if (currentCheckDate.getMonth() !== currentMonth) {
       currentMonth = currentCheckDate.getMonth();
@@ -75,61 +117,21 @@ export function calculateStreak(completedHistory, restDaysOfWeek, maxGracePeriod
 
     if (isCompleted) {
       streak++;
-    } else {
-      if (isToday) {
-        // skip today if not completed
-      } else if (isRestDay) {
-        // skip rest day if not completed
+      shieldsUsed += pendingShields;
+      pendingShields = 0;
+    } else if (!isToday && !isRestDay) {
+      // missed a required day
+      if (gracePeriodsUsedThisMonth < maxGracePeriodsPerMonth) {
+        gracePeriodsUsedThisMonth++; // auto-freeze, streak continues
+        if (isThisMonth) pendingShields++;
       } else {
-        // missed a required day
-        if (gracePeriodsUsedThisMonth < maxGracePeriodsPerMonth) {
-          gracePeriodsUsedThisMonth++;
-          // auto-freeze, streak continues! (we don't increment streak, we just don't break it)
-        } else {
-          // out of shields, streak breaks
-          break;
-        }
+        break; // out of shields, streak breaks
       }
     }
     currentCheckDate.setDate(currentCheckDate.getDate() - 1);
   }
-  
-  return streak;
-}
 
-export function getGracePeriodsUsedThisMonth(completedHistory, restDaysOfWeek) {
-  if (!completedHistory || completedHistory.length === 0) return 0;
-  
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  let currentCheckDate = new Date(today);
-  const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const currentMonth = today.getMonth();
-
-  const completedDates = new Set(completedHistory.map(w => {
-    const d = new Date(w.completed_at);
-    d.setHours(0, 0, 0, 0);
-    return d.getTime();
-  }));
-
-  let gracePeriodsUsed = 0;
-
-  for (let i = 0; i < 31; i++) { // check up to 31 days back, bounded by month
-    if (currentCheckDate.getMonth() !== currentMonth) break;
-
-    const time = currentCheckDate.getTime();
-    const isCompleted = completedDates.has(time);
-    const dayName = DAYS[currentCheckDate.getDay()];
-    const isRestDay = restDaysOfWeek.has(dayName);
-    const isToday = i === 0;
-
-    if (!isCompleted && !isToday && !isRestDay) {
-      gracePeriodsUsed++;
-    }
-    currentCheckDate.setDate(currentCheckDate.getDate() - 1);
-  }
-  
-  return gracePeriodsUsed;
+  return { streak, shieldsUsed };
 }
 
 // Achievements Logic

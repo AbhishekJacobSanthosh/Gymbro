@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { User, Save, LogOut, Loader2, Mail, Medal, Award, Snowflake } from 'lucide-react';
+import { Save, LogOut, Loader2, Mail, Medal, Award, Snowflake } from 'lucide-react';
 import { useToast } from '../App';
-import { getGracePeriodsUsedThisMonth } from '../lib/utils';
+import { calculateStreak, getActiveTemplates, getRestDays, getLevelProgress } from '../lib/utils';
+import { confirmSignOut } from '../lib/offline';
 
 let hasLoadedOnce = false;
 
@@ -40,28 +41,14 @@ export default function Profile({ session }) {
       // Fetch all workouts to calculate grace periods remaining this month
       const { data: allWorkouts } = await supabase
         .from('workouts')
-        .select('id, completed, completed_at, is_rest_day, day_of_week, created_at')
+        .select('id, completed, completed_at, is_rest_day, day_of_week, created_at, routine_name')
         .eq('user_id', user.id);
 
       let usedGrace = 0;
       if (allWorkouts && allWorkouts.length > 0) {
-        const templates = allWorkouts.filter(w => !w.completed && w.routine_name !== 'Spontaneous Workout');
-        templates.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-        
-        const templatesByDay = {};
-        const restDaysOfWeek = new Set();
-        templates.forEach(t => {
-          if (!templatesByDay[t.day_of_week]) {
-            templatesByDay[t.day_of_week] = t;
-            if (t.is_rest_day) restDaysOfWeek.add(t.day_of_week);
-          }
-        });
-        
-        const completedHistory = allWorkouts
-          .filter(w => w.completed)
-          .sort((a, b) => new Date(b.completed_at) - new Date(a.completed_at));
-          
-        usedGrace = getGracePeriodsUsedThisMonth(completedHistory, restDaysOfWeek);
+        const restDaysOfWeek = getRestDays(getActiveTemplates(allWorkouts));
+        const completedHistory = allWorkouts.filter(w => w.completed);
+        usedGrace = calculateStreak(completedHistory, restDaysOfWeek, 3).shieldsUsed;
       }
 
       if (!ignore) {
@@ -93,14 +80,15 @@ export default function Profile({ session }) {
     try {
       const { user } = session;
 
-      const updates = {
-        id: user.id,
-        display_name: displayName,
-        color: color,
-        updated_at: new Date(),
-      };
-
-      const { error } = await supabase.from('profiles').upsert(updates);
+      // Plain update: the sign-up trigger always creates the row, and xp/level are not client-writable
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          display_name: displayName.trim() || null, // '' would clash with the UNIQUE constraint
+          color: color,
+          updated_at: new Date(),
+        })
+        .eq('id', user.id);
 
       if (error) throw error;
       toast?.success('Profile updated successfully!');
@@ -112,6 +100,7 @@ export default function Profile({ session }) {
   };
 
   const handleLogout = async () => {
+    if (!confirmSignOut(session.user.id)) return;
     await supabase.auth.signOut();
   };
 
@@ -165,7 +154,7 @@ export default function Profile({ session }) {
                 <div style={{ height: '6px', backgroundColor: 'var(--bg-elevated)', borderRadius: '3px', overflow: 'hidden' }}>
                   <div style={{ 
                     height: '100%', 
-                    width: `${Math.min(100, ((xp - (Math.pow(level - 1, 2) * 100)) / ((Math.pow(level, 2) * 100) - (Math.pow(level - 1, 2) * 100))) * 100)}%`, 
+                    width: `${getLevelProgress(xp, level).progress}%`,
                     backgroundColor: 'var(--accent)', 
                     borderRadius: '3px' 
                   }} />
@@ -175,7 +164,7 @@ export default function Profile({ session }) {
                     <Snowflake size={12} /> {gracePeriodsRemaining} Shield{gracePeriodsRemaining !== 1 ? 's' : ''} Left this Month
                   </div>
                   <p style={{ fontSize: '0.6875rem', color: 'var(--text-tertiary)', textAlign: 'right' }}>
-                    Next level: {Math.pow(level, 2) * 100} XP
+                    Next level: {getLevelProgress(xp, level).nextLevelXp} XP
                   </p>
                 </div>
               </div>

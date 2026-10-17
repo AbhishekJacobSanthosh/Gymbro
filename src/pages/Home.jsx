@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { supabase } from '../lib/supabase';
-import { TrendingDown, Activity, Trophy, Flame, CheckCircle, Snowflake, X } from 'lucide-react';
+import { TrendingDown, Activity, Trophy, Flame, CheckCircle, Snowflake } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useToast } from '../App';
-import { getGreeting, getRelativeTime, calculateStreak, getGracePeriodsUsedThisMonth } from '../lib/utils';
+import { getGreeting, getRelativeTime, calculateStreak, calculateVolume, parseReps, getActiveTemplates, getRestDays } from '../lib/utils';
+import { readStore } from '../lib/offline';
 
 const quotes = [
   "The only bad workout is the one that didn't happen.",
@@ -35,10 +36,9 @@ const quotes = [
   "Every workout is progress.",
   "Focus on your goals, not your obstacles.",
   "Be stronger than your excuses.",
-  "The only bad workout is the one that didn't happen.",
   "You can have results or excuses. Not both.",
   "What seems impossible today will one day become your warm-up.",
-  "Success is what comes after your stop making excuses.",
+  "Success is what comes after you stop making excuses.",
   "Train insane or remain the same.",
   "A champion is someone who gets up when they can't.",
   "Don't wish for a good body, work for it.",
@@ -112,7 +112,7 @@ const quotes = [
 
 
 
-const CustomTooltip = ({ active, payload, label }) => {
+const CustomTooltip = ({ active, payload }) => {
   if (!active || !payload?.length) return null;
   return (
     <div style={{
@@ -205,16 +205,16 @@ export default function Home({ session }) {
       setTodayTemplate(null);
     }
 
-    // Fetch Weight Logs
+    // Fetch the latest 30 weight logs, shown oldest to newest
     const { data: weights } = await supabase
       .from('weight_logs')
       .select('weight, logged_at')
       .eq('user_id', session.user.id)
-      .order('logged_at', { ascending: true })
+      .order('logged_at', { ascending: false })
       .limit(30);
 
     if (weights) {
-      setWeightData(weights.map(w => ({
+      setWeightData(weights.reverse().map(w => ({
         id: new Date(w.logged_at).getTime(),
         date: new Date(w.logged_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
         time: new Date(w.logged_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
@@ -247,7 +247,7 @@ export default function Home({ session }) {
     // Fetch all workouts to calculate stats
     const { data: allWorkouts } = await supabase
       .from('workouts')
-      .select('id, completed, completed_at, is_rest_day, day_of_week, created_at, exercises(sets, reps, weight, logged_sets)')
+      .select('id, completed, completed_at, is_rest_day, day_of_week, created_at, routine_name, exercises(sets, reps, weight, logged_sets)')
       .eq('user_id', session.user.id);
 
     let streak = 0;
@@ -256,22 +256,12 @@ export default function Home({ session }) {
     let goal = 0;
 
     if (allWorkouts && allWorkouts.length > 0) {
-      // 1. Calculate Weekly Goal (count newest templates that are not rest days)
-      const templates = allWorkouts.filter(w => w.completed === false && w.routine_name !== 'Spontaneous Workout');
-      templates.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); // newest first
+      // 1. Calculate Weekly Goal (newest template per day that is not a rest day and has exercises)
+      const templatesByDay = getActiveTemplates(allWorkouts);
+      const restDaysOfWeek = getRestDays(templatesByDay);
 
-      const templatesByDay = {};
-      const restDaysOfWeek = new Set();
-      templates.forEach(t => {
-        if (!templatesByDay[t.day_of_week]) {
-          templatesByDay[t.day_of_week] = t;
-          if (t.is_rest_day) {
-            restDaysOfWeek.add(t.day_of_week);
-          }
-        }
-      });
-
-      goal = Object.values(templatesByDay).filter(t => t.is_rest_day === false).length;
+      // Empty templates are created just by opening a day in the Planner, so they don't count
+      goal = Object.values(templatesByDay).filter(t => !t.is_rest_day && t.exercises?.length > 0).length;
 
       // 2. Filter to only completed history for streak and progress
       const completedHistory = allWorkouts
@@ -291,49 +281,25 @@ export default function Home({ session }) {
       
       const todayStartCheck = new Date();
       todayStartCheck.setHours(0, 0, 0, 0);
-      setIsTodayCompleted(completedHistory.some(w => new Date(w.completed_at).getTime() >= todayStartCheck.getTime()));
+      // Also counts a workout finished offline that hasn't synced yet
+      const lastFinishedAt = readStore(session.user.id, 'lastFinished', null)?.completedAt;
+      setIsTodayCompleted(
+        completedHistory.some(w => new Date(w.completed_at).getTime() >= todayStartCheck.getTime()) ||
+        (!!lastFinishedAt && new Date(lastFinishedAt) >= todayStartCheck)
+      );
 
       // 4. Calculate Streak
       if (completedHistory.length > 0) {
-        streak = calculateStreak(completedHistory, restDaysOfWeek, 3);
-        const usedGrace = getGracePeriodsUsedThisMonth(completedHistory, restDaysOfWeek);
-        setGracePeriodsRemaining(Math.max(0, 3 - usedGrace));
-        
+        const { streak: currentStreak, shieldsUsed } = calculateStreak(completedHistory, restDaysOfWeek, 3);
+        streak = currentStreak;
+        setGracePeriodsRemaining(Math.max(0, 3 - shieldsUsed));
+
         // 5. Calculate Volume Over Time
         const recentVolumes = [];
-        completedHistory.slice(0, 14).forEach(w => { 
+        completedHistory.slice(0, 14).forEach(w => {
           if (!w.completed_at) return;
-          
-          let vol = 0;
-          if (w.exercises) {
-            w.exercises.forEach(ex => {
-              if (ex.logged_sets && Object.keys(ex.logged_sets).length > 0) {
-                Object.values(ex.logged_sets).forEach(set => {
-                  let reps = 0;
-                  if (typeof set.reps === 'string') {
-                    const match = set.reps.match(/\d+/);
-                    if (match) reps = parseInt(match[0]);
-                  } else {
-                    reps = parseInt(set.reps) || 0;
-                  }
-                  const weight = parseFloat(set.weight) || 0;
-                  vol += (reps * weight);
-                });
-              } else {
-                let reps = 0;
-                if (typeof ex.reps === 'string') {
-                  const match = ex.reps.match(/\d+/);
-                  if (match) reps = parseInt(match[0]);
-                } else {
-                  reps = parseInt(ex.reps) || 0;
-                }
-                const weight = parseFloat(ex.weight) || 0;
-                const sets = parseInt(ex.sets) || 0;
-                vol += (sets * reps * weight);
-              }
-            });
-          }
-          
+
+          const vol = calculateVolume(w.exercises);
           if (vol > 0) {
             recentVolumes.push({
               dateObj: new Date(w.completed_at),
@@ -366,13 +332,7 @@ export default function Home({ session }) {
     if (allExercises) {
       allExercises.forEach(ex => {
         if (!ex.name || !ex.weight) return;
-        let reps = 0;
-        if (typeof ex.reps === 'string') {
-           const match = ex.reps.match(/\d+/);
-           if (match) reps = parseInt(match[0]);
-        } else {
-           reps = parseInt(ex.reps) || 0;
-        }
+        const reps = parseReps(ex.reps);
         const weight = parseFloat(ex.weight) || 0;
         
         if (weight > 0 && reps > 0) {
@@ -394,17 +354,23 @@ export default function Home({ session }) {
 
   const handleWeightSubmit = async (e) => {
     e.preventDefault();
-    if (!weight) return;
+    const value = parseFloat(weight);
+    if (!(value > 0)) {
+      toast?.error('Enter a weight above 0.');
+      return;
+    }
 
     const { error } = await supabase.from('weight_logs').insert([{
       user_id: session.user.id,
-      weight: parseFloat(weight)
+      weight: value
     }]);
 
-    if (!error) {
-      setWeight('');
-      fetchData(); // Refresh the chart
+    if (error) {
+      toast?.error("Couldn't log weight. Please try again.");
+      return;
     }
+    setWeight('');
+    fetchData(); // Refresh the chart
   };
 
 
@@ -483,6 +449,7 @@ export default function Home({ session }) {
             <input
               type="number"
               step="0.1"
+              min="0.1"
               placeholder="Current weight (kg/lbs)"
               value={weight}
               onChange={(e) => setWeight(e.target.value)}
