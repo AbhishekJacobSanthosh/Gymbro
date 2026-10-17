@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { supabase } from '../lib/supabase';
-import { TrendingDown, Activity, Trophy, Flame, CheckCircle, Snowflake } from 'lucide-react';
+import { Check, ChevronRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useToast } from '../App';
-import { getGreeting, getRelativeTime, calculateStreak, calculateVolume, parseReps, getActiveTemplates, getRestDays } from '../lib/utils';
+import { getGreeting, getRelativeTime, calculateStreak, calculateVolume, parseReps, getActiveTemplates, getRestDays, buildWeek } from '../lib/utils';
 import { readStore } from '../lib/offline';
 
 const quotes = [
@@ -112,37 +112,16 @@ const quotes = [
 
 
 
-const CustomTooltip = ({ active, payload }) => {
+function ChartTip({ active, payload, label, unit }) {
   if (!active || !payload?.length) return null;
+  const point = payload[0].payload;
   return (
-    <div style={{
-      backgroundColor: 'var(--bg-elevated)',
-      border: '1px solid var(--border)',
-      borderRadius: 'var(--radius-sm)',
-      padding: '0.5rem 0.75rem',
-      boxShadow: 'var(--shadow-md)',
-    }}>
-      <p style={{ color: 'var(--text-tertiary)', fontSize: '0.6875rem', marginBottom: '0.125rem' }}>{payload[0].payload.date} {payload[0].payload.time}</p>
-      <p style={{ color: 'var(--accent)', fontSize: '0.9375rem', fontWeight: 600 }}>{payload[0].value} kg</p>
+    <div className="chart-tip">
+      <p className="chart-tip-label">{point.date ?? label}{point.time ? `, ${point.time}` : ''}</p>
+      <p className="chart-tip-value num">{payload[0].value} {unit}</p>
     </div>
   );
-};
-
-const CustomVolumeTooltip = ({ active, payload, label }) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div style={{
-      backgroundColor: 'var(--bg-elevated)',
-      border: '1px solid var(--border)',
-      borderRadius: 'var(--radius-sm)',
-      padding: '0.5rem 0.75rem',
-      boxShadow: 'var(--shadow-md)',
-    }}>
-      <p style={{ color: 'var(--text-tertiary)', fontSize: '0.6875rem', marginBottom: '0.125rem' }}>{label}</p>
-      <p style={{ color: '#3b82f6', fontSize: '0.9375rem', fontWeight: 600 }}>{payload[0].value} volume</p>
-    </div>
-  );
-};
+}
 
 export default function Home({ session }) {
   const toast = useToast();
@@ -157,6 +136,7 @@ export default function Home({ session }) {
   const [todayTemplate, setTodayTemplate] = useState(null);
   const [isTodayCompleted, setIsTodayCompleted] = useState(false);
   const [gracePeriodsRemaining, setGracePeriodsRemaining] = useState(3);
+  const [week, setWeek] = useState(() => buildWeek([], {}));
   
   // Analytics State
   const [volumeData, setVolumeData] = useState([]);
@@ -287,6 +267,7 @@ export default function Home({ session }) {
         completedHistory.some(w => new Date(w.completed_at).getTime() >= todayStartCheck.getTime()) ||
         (!!lastFinishedAt && new Date(lastFinishedAt) >= todayStartCheck)
       );
+      setWeek(buildWeek([...completedHistory.map(w => w.completed_at), ...(lastFinishedAt ? [lastFinishedAt] : [])], templatesByDay));
 
       // 4. Calculate Streak
       if (completedHistory.length > 0) {
@@ -376,292 +357,248 @@ export default function Home({ session }) {
 
 
   const greeting = getGreeting();
+  const firstName = displayName.trim().split(/\s+/)[0];
+  const todayExercises = [...(todayTemplate?.exercises || [])].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  const latestWeight = weightData[weightData.length - 1]?.weight;
+  const firstWeight = weightData[0]?.weight;
+  const weightChange = latestWeight != null && firstWeight != null && weightData.length > 1
+    ? Math.round((latestWeight - firstWeight) * 10) / 10
+    : null;
+  const dayStatus = (d) => d.trained ? 'trained' : d.rest ? 'rest day' : d.planned ? 'planned' : 'nothing planned';
 
   return (
-    <div className="flex-col gap-6" style={{ display: 'flex' }}>
-      {/* Header */}
-      <header className="page-header flex justify-between items-center">
-        <div>
-          <h1 className="page-title">{greeting}{displayName ? `, ${displayName}` : ''}!</h1>
-          <p className="page-subtitle">Let's get after it today.</p>
+    <div className="home">
+      <header className="home-header">
+        <div className="home-heading">
+          <h1 className="page-title">{greeting}{firstName ? `, ${firstName}` : ''}</h1>
+          {quote && <p className="home-quote">{quote}</p>}
         </div>
-        <div style={{ textAlign: 'right' }}>
-          <div style={{ display: 'inline-block', backgroundColor: 'var(--accent-soft)', color: 'var(--accent)', padding: '4px 12px', borderRadius: '100px', fontWeight: 700, fontSize: '0.875rem' }}>
-            Level {level}
-          </div>
-          <p style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '4px', fontWeight: 600 }}>{xp} XP</p>
-        </div>
+        <Link to="/profile" className="level-pill" aria-label={`Level ${level}, ${xp} XP. Open profile`}>
+          <span className="level-pill-label">Level</span>
+          <span className="num">{level}</span>
+        </Link>
       </header>
 
-      {/* Quick Stats */}
-      <div className="stats-scroll" style={{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap' }}>
-        <div className="stat-card" style={{ flex: '1 1 180px' }}>
+      {/* This week: did I train, what's next */}
+      <section className="home-section" aria-labelledby="week-title">
+        <h2 id="week-title" className="sr-only">This week</h2>
+        <ol className="week-strip">
+          {week.map(d => (
+            <li
+              key={d.name}
+              className={`week-day ${d.trained ? 'is-trained' : ''} ${d.planned ? 'is-planned' : ''} ${d.rest ? 'is-rest' : ''} ${d.isToday ? 'is-today' : ''}`}
+              aria-label={`${d.name}${d.isToday ? ' (today)' : ''}: ${dayStatus(d)}`}
+            >
+              <span className="week-day-letter" aria-hidden="true">{d.letter}</span>
+              <span className="week-day-mark" aria-hidden="true">
+                {d.trained ? <Check size={16} strokeWidth={3} /> : d.rest ? '–' : <span className="num">{d.date}</span>}
+              </span>
+            </li>
+          ))}
+        </ol>
+        <dl className="week-stats">
           <div>
-            <p className="stat-label">Total Workouts</p>
-            <p className="stat-value">{stats.totalWorkouts}</p>
+            <dt>Streak</dt>
+            <dd className="num">{stats.currentStreak} {stats.currentStreak === 1 ? 'day' : 'days'}</dd>
           </div>
-          <div className="stat-icon" style={{ backgroundColor: 'var(--success-soft)' }}>
-            <CheckCircle size={22} style={{ color: 'var(--success)' }} />
-          </div>
-        </div>
-        <div className="stat-card" style={{ flex: '1 1 180px' }}>
           <div>
-            <p className="stat-label">Current Streak</p>
-            <p className="stat-value">{stats.currentStreak} Days</p>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px', color: 'var(--text-tertiary)', fontSize: '0.75rem' }}>
-              <Snowflake size={12} /> {gracePeriodsRemaining} Shield{gracePeriodsRemaining !== 1 ? 's' : ''} Left
-            </div>
+            <dt>This week</dt>
+            <dd className="num">{stats.weeklyGoal.replace(' / ', ' of ')}</dd>
           </div>
-          <div className="stat-icon" style={{ backgroundColor: 'var(--accent-soft)' }}>
-            <Flame size={22} style={{ color: 'var(--accent)' }} />
-          </div>
-        </div>
-        <div className="stat-card" style={{ flex: '1 1 180px' }}>
           <div>
-            <p className="stat-label">Weekly Goal</p>
-            <p className="stat-value">{stats.weeklyGoal}</p>
+            <dt>Shields left</dt>
+            <dd className="num">{gracePeriodsRemaining}</dd>
           </div>
-          <div className="stat-icon" style={{ backgroundColor: 'var(--warning-soft)' }}>
-            <Trophy size={22} style={{ color: 'var(--warning)' }} />
+        </dl>
+      </section>
+
+      {/* Today's plan */}
+      <section className="home-section" aria-labelledby="today-title">
+        <h2 id="today-title" className="section-title">Today</h2>
+        {isTodayCompleted ? (
+          <Link to="/workouts" className="panel today-plan">
+            <span className="today-plan-done"><Check size={18} strokeWidth={3} /></span>
+            <span className="today-plan-text">
+              <strong>Done for today</strong>
+              <span>Nice work. See you tomorrow.</span>
+            </span>
+            <ChevronRight size={18} className="today-plan-chevron" />
+          </Link>
+        ) : todayTemplate?.is_rest_day ? (
+          <div className="panel today-plan">
+            <span className="today-plan-text">
+              <strong>Rest day</strong>
+              <span>Recover and come back stronger.</span>
+            </span>
           </div>
-        </div>
-      </div>
+        ) : todayExercises.length > 0 ? (
+          <Link to="/workouts" className="panel today-plan">
+            <span className="today-plan-text">
+              <strong>{todayTemplate.routine_name || 'Workout'}</strong>
+              <span>{todayExercises.length} exercise{todayExercises.length === 1 ? '' : 's'}: {todayExercises.slice(0, 3).map(ex => ex.name).join(', ')}{todayExercises.length > 3 ? '…' : ''}</span>
+            </span>
+            <span className="btn btn-primary">Start</span>
+          </Link>
+        ) : (
+          <Link to="/templates" className="panel today-plan">
+            <span className="today-plan-text">
+              <strong>Nothing planned today</strong>
+              <span>Plan your week in the Planner.</span>
+            </span>
+            <ChevronRight size={18} className="today-plan-chevron" />
+          </Link>
+        )}
+      </section>
 
-      {/* Quote */}
-      <div className="card quote-card">
-        <p style={{ fontStyle: 'italic', fontSize: '1rem', color: 'var(--text-secondary)', lineHeight: 1.6, position: 'relative', zIndex: 1 }}>
-          "{quote}"
-        </p>
-      </div>
-
-      {/* Charts & Activity */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--space-5)' }}>
-        {/* Weight Tracker */}
-        <div className="card">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="stat-icon" style={{ backgroundColor: 'var(--accent-soft)', width: '36px', height: '36px' }}>
-              <TrendingDown size={18} style={{ color: 'var(--accent)' }} />
-            </div>
-            <h2 style={{ fontSize: '1.0625rem', fontWeight: 600 }}>Weight Tracker</h2>
-          </div>
-
-          <form onSubmit={handleWeightSubmit} className="flex gap-2 mb-5">
-            <input
-              type="number"
-              inputMode="decimal"
-              step="0.1"
-              min="0.1"
-              placeholder="Current weight (kg/lbs)"
-              value={weight}
-              onChange={(e) => setWeight(e.target.value)}
-              style={{ flex: 1 }}
-            />
-            <button type="submit" className="btn btn-primary">Log</button>
-          </form>
-
-          <div style={{ height: '200px', width: '100%' }}>
-            {weightData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={weightData}>
-                  <defs>
-                    <linearGradient id="weightGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" style={{ stopColor: 'var(--accent)', stopOpacity: 0.25 }} />
-                      <stop offset="100%" style={{ stopColor: 'var(--accent)', stopOpacity: 0 }} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                  <XAxis 
-                    dataKey="id" 
-                    type="number"
-                    domain={['dataMin', 'dataMax']}
-                    tickFormatter={(id) => new Date(id).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} 
-                    stroke="var(--text-quaternary)" 
-                    tick={{ fontSize: 11 }} 
-                    axisLine={false} 
-                    tickLine={false} 
-                  />
-                  <YAxis domain={['dataMin - 1', 'dataMax + 1']} stroke="var(--text-quaternary)" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} width={40} />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Area
-                    type="monotone"
-                    dataKey="weight"
-                    stroke="var(--accent)"
-                    strokeWidth={2.5}
-                    fill="url(#weightGradient)"
-                    dot={{ r: 3, fill: 'var(--accent)', stroke: 'var(--bg-surface)', strokeWidth: 2 }}
-                    activeDot={{ r: 5, fill: 'var(--accent)', stroke: 'var(--bg-surface)', strokeWidth: 2 }}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="empty-state" style={{ padding: 'var(--space-8) var(--space-4)' }}>
-                <TrendingDown size={32} className="empty-state-icon" />
-                <p className="empty-state-text">No weight data logged yet. Start tracking above!</p>
-              </div>
+      <div className="home-grid">
+        {/* Bodyweight */}
+        <section className="home-section" aria-labelledby="weight-title">
+          <div className="section-head">
+            <h2 id="weight-title" className="section-title">Bodyweight</h2>
+            {latestWeight != null && (
+              <p className="section-figure">
+                <span className="num">{latestWeight} kg</span>
+                {weightChange !== null && weightChange !== 0 && (
+                  <span className="section-figure-change">{weightChange > 0 ? '+' : ''}{weightChange} since {weightData[0].date}</span>
+                )}
+              </p>
             )}
           </div>
-        </div>
-
-        {/* Volume Tracker */}
-        <div className="card">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="stat-icon" style={{ backgroundColor: 'rgba(59, 130, 246, 0.1)', width: '36px', height: '36px' }}>
-              <Activity size={18} style={{ color: '#3b82f6' }} />
+          <div className="panel">
+            <form onSubmit={handleWeightSubmit} className="inline-form">
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.1"
+                min="0.1"
+                placeholder="Today's weight"
+                aria-label="Today's weight"
+                value={weight}
+                onChange={(e) => setWeight(e.target.value)}
+              />
+              <button type="submit" className="btn btn-primary">Log</button>
+            </form>
+            <div className="chart">
+              {weightData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={weightData} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="weightGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" style={{ stopColor: 'var(--accent)', stopOpacity: 0.25 }} />
+                        <stop offset="100%" style={{ stopColor: 'var(--accent)', stopOpacity: 0 }} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid stroke="var(--divider)" vertical={false} />
+                    <XAxis
+                      dataKey="id"
+                      type="number"
+                      domain={['dataMin', 'dataMax']}
+                      tickFormatter={(id) => new Date(id).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      tick={{ fontSize: 11 }}
+                      axisLine={false}
+                      tickLine={false}
+                      minTickGap={24}
+                    />
+                    <YAxis domain={['dataMin - 1', 'dataMax + 1']} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} width={36} />
+                    <Tooltip content={<ChartTip unit="kg" />} cursor={{ stroke: 'var(--border-hover)' }} />
+                    <Area
+                      type="monotone"
+                      dataKey="weight"
+                      stroke="var(--accent)"
+                      strokeWidth={2.5}
+                      fill="url(#weightGradient)"
+                      dot={false}
+                      activeDot={{ r: 5, fill: 'var(--accent)', stroke: 'var(--bg-surface)', strokeWidth: 2 }}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <p className="chart-empty">Log your weight above to start the chart.</p>
+              )}
             </div>
-            <h2 style={{ fontSize: '1.0625rem', fontWeight: 600 }}>Volume History</h2>
           </div>
+        </section>
 
-          <div style={{ height: '200px', width: '100%' }}>
-            {volumeData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={volumeData}>
-                  <defs>
-                    <linearGradient id="volGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.25} />
-                      <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                  <XAxis dataKey="date" stroke="var(--text-quaternary)" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis stroke="var(--text-quaternary)" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} width={40} />
-                  <Tooltip content={<CustomVolumeTooltip />} />
-                  <Area
-                    type="monotone"
-                    dataKey="volume"
-                    stroke="#3b82f6"
-                    strokeWidth={2.5}
-                    fill="url(#volGradient)"
-                    dot={{ r: 3, fill: '#3b82f6', stroke: 'var(--bg-surface)', strokeWidth: 2 }}
-                    activeDot={{ r: 5, fill: '#3b82f6', stroke: 'var(--bg-surface)', strokeWidth: 2 }}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="empty-state" style={{ padding: 'var(--space-8) var(--space-4)' }}>
-                <Activity size={32} className="empty-state-icon" />
-                <p className="empty-state-text">
-                  {stats.totalWorkouts > 0 
-                    ? "No volume data found. Track reps and weight to see your graph!" 
-                    : "Complete workouts to see your volume graph!"}
+        {/* Volume */}
+        <section className="home-section" aria-labelledby="volume-title">
+          <div className="section-head">
+            <h2 id="volume-title" className="section-title">Volume</h2>
+            <p className="section-note">Last 14 workouts, kg moved</p>
+          </div>
+          <div className="panel">
+            <div className="chart">
+              {volumeData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={volumeData} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="volGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" style={{ stopColor: 'var(--accent)', stopOpacity: 0.25 }} />
+                        <stop offset="100%" style={{ stopColor: 'var(--accent)', stopOpacity: 0 }} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid stroke="var(--divider)" vertical={false} />
+                    <XAxis dataKey="date" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={24} />
+                    <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} width={44} />
+                    <Tooltip content={<ChartTip unit="kg" />} cursor={{ stroke: 'var(--border-hover)' }} />
+                    <Area
+                      type="monotone"
+                      dataKey="volume"
+                      stroke="var(--accent)"
+                      strokeWidth={2.5}
+                      fill="url(#volGradient)"
+                      dot={false}
+                      activeDot={{ r: 5, fill: 'var(--accent)', stroke: 'var(--bg-surface)', strokeWidth: 2 }}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <p className="chart-empty">
+                  {stats.totalWorkouts > 0
+                    ? 'Log weight and reps on your sets to see your volume.'
+                    : 'Finish a workout to see your volume.'}
                 </p>
-              </div>
-            )}
+              )}
+            </div>
           </div>
-        </div>
+        </section>
 
-        {/* 1RM Estimations */}
+        {/* Best lifts */}
         {top1RMs.length > 0 && (
-          <div className="card">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="stat-icon" style={{ backgroundColor: 'var(--warning-soft)', width: '36px', height: '36px' }}>
-                <Trophy size={18} style={{ color: 'var(--warning)' }} />
-              </div>
-              <h2 style={{ fontSize: '1.0625rem', fontWeight: 600 }}>Est. 1 Rep Max</h2>
+          <section className="home-section" aria-labelledby="lifts-title">
+            <div className="section-head">
+              <h2 id="lifts-title" className="section-title">Best lifts</h2>
+              <p className="section-note">Estimated 1-rep max</p>
             </div>
-            
-            <div className="flex-col gap-3" style={{ display: 'flex' }}>
-              {top1RMs.map((item, idx) => (
-                <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 16px', backgroundColor: 'var(--bg-elevated)', borderRadius: 'var(--radius-md)' }}>
-                  <span style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{item.name}</span>
-                  <span style={{ fontWeight: 700, color: 'var(--accent)' }}>{item.rm} kg</span>
-                </div>
+            <ul className="grouped-list">
+              {top1RMs.map(item => (
+                <li key={item.name} className="list-row">
+                  <span className="list-row-main">{item.name}</span>
+                  <span className="list-row-value num">{item.rm} kg</span>
+                </li>
               ))}
-            </div>
-          </div>
+            </ul>
+          </section>
         )}
 
-        {/* Activity Feed */}
-        <div className="card">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="stat-icon" style={{ backgroundColor: 'var(--accent-soft)', width: '36px', height: '36px' }}>
-              <Activity size={18} style={{ color: 'var(--accent)' }} />
-            </div>
-            <h2 style={{ fontSize: '1.0625rem', fontWeight: 600 }}>Activity Feed</h2>
-          </div>
-
-          <div className="flex-col gap-4" style={{ display: 'flex' }}>
-            {activities.map(activity => (
-              <div key={activity.id} className="activity-item" style={{ paddingBottom: 'var(--space-4)' }}>
-                <p style={{ fontSize: '0.875rem', lineHeight: 1.5 }}>
-                  <strong style={{ color: 'var(--accent)', fontWeight: 600 }}>{activity.user}</strong>{' '}
-                  <span style={{ color: 'var(--text-secondary)' }}>{activity.action}</span>
-                </p>
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>{activity.time}</span>
-              </div>
-            ))}
-            {activities.length === 0 && (
-              <div className="empty-state" style={{ padding: 'var(--space-6) 0' }}>
-                <Activity size={28} className="empty-state-icon" />
-                <p className="empty-state-text">No recent activity. Go crush a workout!</p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Today's Plan */}
-        <div className="card" style={{ display: 'flex', flexDirection: 'column' }}>
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="stat-icon" style={{ backgroundColor: 'var(--accent-soft)', width: '36px', height: '36px' }}>
-                <CheckCircle size={18} style={{ color: 'var(--accent)' }} />
-              </div>
-              <h2 style={{ fontSize: '1.0625rem', fontWeight: 600 }}>Today's Plan</h2>
-            </div>
-          </div>
-          
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-            {isTodayCompleted ? (
-              <div className="empty-state" style={{ padding: 'var(--space-4) 0' }}>
-                <span style={{ fontSize: '2rem', marginBottom: 'var(--space-2)' }}>💪</span>
-                <p style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Already Completed!</p>
-                <p className="empty-state-text">You crushed your workout for today.</p>
-              </div>
-            ) : todayTemplate ? (
-              todayTemplate.is_rest_day ? (
-                <div className="empty-state" style={{ padding: 'var(--space-4) 0' }}>
-                  <span style={{ fontSize: '2rem', marginBottom: 'var(--space-2)' }}>☕</span>
-                  <p style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Rest Day</p>
-                  <p className="empty-state-text">Time to recover and grow.</p>
-                </div>
-              ) : (
-                <div className="flex-col gap-3" style={{ display: 'flex' }}>
-                  <p style={{ fontWeight: 600, fontSize: '0.9375rem', color: 'var(--accent)' }}>
-                    {todayTemplate.routine_name || 'Workout'}
-                  </p>
-                  
-                  {todayTemplate.exercises?.length > 0 ? (
-                    <div className="flex-col gap-2" style={{ display: 'flex', marginTop: 'var(--space-1)' }}>
-                      {todayTemplate.exercises.slice(0, 4).map(ex => (
-                        <div key={ex.id} className="flex justify-between items-center" style={{ fontSize: '0.875rem' }}>
-                          <span style={{ color: 'var(--text-secondary)' }}>{ex.name}</span>
-                          <span style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem' }}>{ex.sets} × {ex.reps}</span>
-                        </div>
-                      ))}
-                      {todayTemplate.exercises.length > 4 && (
-                        <p style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', textAlign: 'center', marginTop: 'var(--space-2)' }}>
-                          +{todayTemplate.exercises.length - 4} more exercises
-                        </p>
-                      )}
-                    </div>
-                  ) : (
-                    <p style={{ fontSize: '0.875rem', color: 'var(--text-tertiary)' }}>No exercises added yet.</p>
-                  )}
-                  
-                  <Link to="/workouts" className="btn btn-secondary btn-sm" style={{ marginTop: 'var(--space-4)', alignSelf: 'flex-start' }}>
-                    Start Workout
-                  </Link>
-                </div>
-              )
-            ) : (
-              <div className="empty-state" style={{ padding: 'var(--space-4) 0' }}>
-                <p className="empty-state-text">No template set for today.</p>
-                <Link to="/templates" className="btn btn-secondary btn-sm mt-3">Set one up</Link>
-              </div>
-            )}
-          </div>
-        </div>
+        {/* Friends */}
+        <section className="home-section" aria-labelledby="feed-title">
+          <h2 id="feed-title" className="section-title">Friends</h2>
+          {activities.length > 0 ? (
+            <ul className="grouped-list">
+              {activities.map(activity => (
+                <li key={activity.id} className="list-row list-row-stacked">
+                  <span className="list-row-main">
+                    <strong>{activity.user}</strong> {activity.action}
+                  </span>
+                  <span className="list-row-meta">{activity.time}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="panel chart-empty">No activity yet. Finish a workout and it shows up here.</p>
+          )}
+        </section>
       </div>
-
     </div>
   );
 }

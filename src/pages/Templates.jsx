@@ -48,7 +48,7 @@ export default function Templates({ session }) {
     if (!session?.user) return;
     const { data } = await supabase
       .from('workouts')
-      .select('day_of_week, routine_name, is_rest_day')
+      .select('day_of_week, routine_name, is_rest_day, exercises(count)')
       .eq('user_id', session.user.id)
       .eq('completed', false)
       .neq('routine_name', 'Spontaneous Workout')
@@ -58,7 +58,11 @@ export default function Templates({ session }) {
       const overview = {};
       data.forEach(t => {
         if (!overview[t.day_of_week]) {
-          overview[t.day_of_week] = t.is_rest_day ? 'Rest' : (t.routine_name || 'Workout');
+          overview[t.day_of_week] = {
+            name: t.routine_name || 'Workout',
+            rest: !!t.is_rest_day,
+            count: t.exercises?.[0]?.count ?? 0,
+          };
         }
       });
       setWeeklyOverview(overview);
@@ -177,6 +181,7 @@ export default function Templates({ session }) {
     if (!error && inserted) {
       setExercises([...exercises, inserted]);
       setNewExercise({ name: '', sets: '', reps: '', weight: '', minutes: '' });
+      fetchWeeklyOverview();
     }
 
     setAddingExercise(false);
@@ -215,7 +220,9 @@ export default function Templates({ session }) {
       if (error) {
         restore();
         toast?.error(`Couldn't remove ${removed.name}. Check your connection.`);
+        return;
       }
+      fetchWeeklyOverview();
     }, 5000);
 
     toast?.action(`Removed ${removed.name}`, {
@@ -281,7 +288,7 @@ export default function Templates({ session }) {
     const touch = e.touches[0];
     const element = document.elementFromPoint(touch.clientX, touch.clientY);
     if (element) {
-      const row = element.closest('.exercise-grid-row');
+      const row = element.closest('.plan-row');
       if (row && row.dataset.index !== undefined) {
         setDragOverIdx(parseInt(row.dataset.index));
       }
@@ -295,288 +302,211 @@ export default function Templates({ session }) {
   };
 
   const todayIndex = new Date().getDay();
+  const dayStatus = (day) => {
+    const plan = weeklyOverview[day];
+    if (!plan) return { kind: 'none', label: 'Not planned' };
+    if (plan.rest) return { kind: 'rest', label: 'Rest' };
+    if (plan.count > 0) return { kind: 'planned', label: `${plan.name}, ${plan.count} exercise${plan.count === 1 ? '' : 's'}` };
+    return { kind: 'none', label: 'Not planned' };
+  };
 
   return (
-    <div className="flex-col gap-5" style={{ display: 'flex' }}>
+    <div className="planner">
       <header className="page-header">
         <h1 className="page-title">Planner</h1>
-        <p className="page-subtitle">Build your weekly templates and edit exercises.</p>
+        <p className="page-subtitle">Your weekly plan. Changes show up in your next workout.</p>
       </header>
 
-      <div className="planner-layout">
-        
-        {/* Right Sidebar: Weekly Overview */}
-        <div className="planner-sidebar">
-          <div className="card" style={{ padding: 'var(--space-5)' }}>
-            <p className="text-label mb-4">Weekly Overview</p>
-            <div className="flex-col gap-2" style={{ display: 'flex' }}>
-              {DAYS.map((day, i) => (
-                <div
-                  key={day}
-                  className="weekly-day-pill"
-                  style={{
-                    backgroundColor: i === todayIndex ? 'var(--accent-muted)' : 'var(--bg-elevated)',
-                    border: i === todayIndex ? '1px solid var(--accent-soft)' : '1px solid transparent',
-                    width: '100%',
-                    justifyContent: 'space-between',
-                    padding: 'var(--space-3) var(--space-4)'
-                  }}
-                >
-                  <span className="weekly-day-label" style={{ fontSize: '0.8125rem' }}>{day}</span>
-                  <span className={`weekly-day-value ${weeklyOverview[day] === 'Rest' ? 'is-rest' : weeklyOverview[day] ? 'has-workout' : ''}`}>
-                    {weeklyOverview[day] || '—'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Left Column: Main Planner */}
-        <div style={{ flex: '2 1 500px', display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
-          {/* Day Selector */}
-          <div className="day-selector">
-            {DAYS.map((day, i) => (
-              <button
-                key={day}
-                onClick={() => setActiveDay(day)}
-                className={`btn ${activeDay === day ? 'btn-primary' : 'btn-secondary'}`}
-                style={{ flexShrink: 0 }}
-              >
-                <span className="day-full">{SHORT_DAYS[i]}</span>
-              </button>
-            ))}
-          </div>
-
-          {/* Template Card */}
-          <div className="card">
-            {loading ? (
-              <div className="empty-state">
-                <Loader2 size={28} className="animate-spin" style={{ color: 'var(--text-tertiary)' }} />
-              </div>
-            ) : (
-              <>
-                {/* Routine Header */}
-                <div className="flex items-center justify-between mb-6" style={{ paddingBottom: 'var(--space-4)', borderBottom: '1px solid var(--divider)' }}>
-                  <div className="flex items-center gap-3">
-                    {isEditingName ? (
-                      <form onSubmit={(e) => { e.preventDefault(); setIsEditingName(false); handleUpdateTemplate({ routine_name: routineName }); }} className="flex gap-2 items-center">
-                        <input
-                          type="text"
-                          value={routineName}
-                          onChange={(e) => setRoutineName(e.target.value)}
-                          style={{ padding: '0.375rem 0.75rem', fontSize: '1.125rem', fontWeight: 700, width: '200px' }}
-                          autoFocus
-                        />
-                        <button type="submit" className="btn btn-primary btn-sm">
-                          <Save size={16} />
-                        </button>
-                      </form>
-                    ) : (
-                      <>
-                        <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>{routineName}</h2>
-                        <button onClick={() => setIsEditingName(true)} className="btn-icon btn-ghost" style={{ width: '32px', height: '32px' }}>
-                          <Edit3 size={15} style={{ color: 'var(--text-tertiary)' }} />
-                        </button>
-                      </>
-                    )}
-                  </div>
-
-                  <button
-                    onClick={() => handleUpdateTemplate({ is_rest_day: !isRestDay })}
-                    className={`btn btn-sm ${isRestDay ? 'btn-secondary' : 'btn-ghost'}`}
-                  >
-                    {isRestDay ? 'Undo Rest Day' : 'Mark Rest Day'}
-                  </button>
-                </div>
-
-                {/* Main Content Area */}
-                {isRestDay ? (
-                  <div className="rest-day-card">
-                    <Coffee size={40} className="rest-day-icon" style={{ margin: '0 auto' }} />
-                    <h3 style={{ fontSize: '1.125rem', fontWeight: 600, margin: 'var(--space-2) 0', color: 'var(--text-secondary)' }}>Rest Day</h3>
-                    <p style={{ color: 'var(--text-tertiary)', maxWidth: '280px', margin: '0 auto', fontSize: '0.875rem' }}>
-                      Take it easy today. Recovery is just as important as the workout!
-                    </p>
-                  </div>
-                ) : (
-                  <>
-                    {/* Exercise List */}
-                    <div className="flex-col mb-6" style={{ display: 'flex' }}>
-                      {exercises.length === 0 ? (
-                        <div className="empty-state">
-                          <Dumbbell size={32} className="empty-state-icon" />
-                          <p className="empty-state-title">No exercises yet</p>
-                          <p className="empty-state-text">Add some exercises below to build your template!</p>
-                        </div>
-                      ) : (
-                        <>
-                          {/* Desktop: Grid Header */}
-                          <div className="exercise-grid-header" style={{ display: 'none' }}>
-                            <span style={{ flex: 3 }}>Exercise</span>
-                            <span style={{ flex: 1, textAlign: 'center' }}>Sets</span>
-                            <span style={{ flex: 1, textAlign: 'center' }}>Reps</span>
-                            <span style={{ flex: 1, textAlign: 'center' }}>Weight</span>
-                            <span style={{ flex: 1, textAlign: 'center' }}>Mins</span>
-                            <span style={{ width: '36px' }}></span>
-                          </div>
-
-                          {/* Show grid header on desktop */}
-                          <style>{`.exercise-grid-header { display: none !important; } @media (min-width: 641px) { .exercise-grid-header { display: flex !important; } }`}</style>
-
-                          {exercises.map((ex, idx) => (
-                            <div 
-                              key={ex.id} 
-                              data-index={idx}
-                              className={`exercise-grid-row ${dragOverIdx === idx ? 'drag-over' : ''}`}
-                              draggable={activeDragId === ex.id}
-                              onDragStart={(e) => handleDragStart(e, idx)}
-                              onDragEnter={(e) => handleDragEnter(e, idx)}
-                              onDragOver={handleDragOver}
-                              onDragEnd={handleDragEnd}
-                              style={{ 
-                                opacity: draggedIdx === idx ? 0.5 : 1,
-                                borderTop: dragOverIdx === idx && draggedIdx > idx ? '2px solid var(--accent)' : 'none',
-                                borderBottom: dragOverIdx === idx && draggedIdx < idx ? '2px solid var(--accent)' : 'none',
-                                transition: 'all 0.2s ease',
-                                cursor: activeDragId === ex.id ? 'grabbing' : 'default'
-                              }}
-                            >
-                              <div 
-                                style={{ display: 'flex', alignItems: 'center', cursor: 'grab', color: 'var(--text-tertiary)', paddingRight: '8px', touchAction: 'none' }}
-                                onMouseDown={() => setActiveDragId(ex.id)}
-                                onMouseUp={() => setActiveDragId(null)}
-                                onMouseLeave={() => setActiveDragId(null)}
-                                onTouchStart={(e) => handleTouchStart(e, idx)}
-                                onTouchMove={handleTouchMove}
-                                onTouchEnd={handleTouchEnd}
-                              >
-                                <GripVertical size={16} />
-                              </div>
-                              <input
-                                type="text"
-                                list="exercise-suggestions"
-                                value={ex.name}
-                                onChange={e => handleLocalChange(ex.id, 'name', e.target.value)}
-                                onBlur={e => handleBlurSave(ex.id, 'name', e.target.value)}
-                                style={{ flex: 3, minWidth: 0, fontWeight: 500, cursor: 'text' }}
-                              />
-                              <input
-                                type="number"
-                                inputMode="numeric"
-                                value={ex.sets}
-                                onChange={e => handleLocalChange(ex.id, 'sets', e.target.value)}
-                                onBlur={e => handleBlurSave(ex.id, 'sets', e.target.value)}
-                                style={{ flex: 1, minWidth: 0, textAlign: 'center', padding: '0.5rem 0.25rem', cursor: 'text' }}
-                                placeholder="Sets"
-                              />
-                              <input
-                                type="text"
-                                value={ex.reps}
-                                onChange={e => handleLocalChange(ex.id, 'reps', e.target.value)}
-                                onBlur={e => handleBlurSave(ex.id, 'reps', e.target.value)}
-                                style={{ flex: 1, minWidth: 0, textAlign: 'center', padding: '0.5rem 0.25rem', cursor: 'text' }}
-                                placeholder="Reps"
-                              />
-                              <input
-                                type="number"
-                                inputMode="decimal"
-                                step="0.5"
-                                value={ex.weight}
-                                onChange={e => handleLocalChange(ex.id, 'weight', e.target.value)}
-                                onBlur={e => handleBlurSave(ex.id, 'weight', e.target.value)}
-                                style={{ flex: 1, minWidth: 0, textAlign: 'center', padding: '0.5rem 0.25rem', cursor: 'text' }}
-                                placeholder="kg"
-                              />
-                              <input
-                                type="number"
-                                inputMode="numeric"
-                                value={ex.minutes || ''}
-                                onChange={e => handleLocalChange(ex.id, 'minutes', e.target.value)}
-                                onBlur={e => handleBlurSave(ex.id, 'minutes', e.target.value)}
-                                style={{ flex: 1, minWidth: 0, textAlign: 'center', padding: '0.5rem 0.25rem', cursor: 'text' }}
-                                placeholder="Mins"
-                              />
-                              <button
-                                onClick={() => removeExercise(ex.id)}
-                                aria-label={`Remove ${ex.name}`}
-                                className="btn-icon btn-danger"
-                                style={{ width: '36px', height: '36px', flexShrink: 0, cursor: 'pointer' }}
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </div>
-                          ))}
-                        </>
-                      )}
-                    </div>
-
-                    {/* Add Exercise Form */}
-                    <div style={{ borderTop: '1px solid var(--divider)', paddingTop: 'var(--space-6)' }}>
-                      <p className="text-label mb-3">Quick Add</p>
-                      <datalist id="exercise-suggestions">
-                        {pastExercises.map(name => <option key={name} value={name} />)}
-                      </datalist>
-                      <form onSubmit={handleAddExercise} className="flex gap-2 flex-wrap items-end">
-                        <div style={{ flex: '1 1 150px' }}>
-                          <input
-                            type="text"
-                            list="exercise-suggestions"
-                            placeholder="Exercise Name"
-                            value={newExercise.name}
-                            onChange={e => setNewExercise({ ...newExercise, name: e.target.value })}
-                            required
-                          />
-                        </div>
-                        <div style={{ flex: '0 1 72px' }}>
-                          <input
-                            type="number"
-                            inputMode="numeric"
-                            min="0"
-                            placeholder="Sets"
-                            value={newExercise.sets}
-                            onChange={e => setNewExercise({ ...newExercise, sets: e.target.value })}
-                          />
-                        </div>
-                        <div style={{ flex: '0 1 72px' }}>
-                          <input
-                            type="text"
-                            placeholder="Reps"
-                            value={newExercise.reps}
-                            onChange={e => setNewExercise({ ...newExercise, reps: e.target.value })}
-                          />
-                        </div>
-                        <div style={{ flex: '0 1 72px' }}>
-                          <input
-                            type="number"
-                            inputMode="decimal"
-                            step="0.5"
-                            placeholder="kg"
-                            value={newExercise.weight}
-                            onChange={e => setNewExercise({ ...newExercise, weight: e.target.value })}
-                          />
-                        </div>
-                        <div style={{ flex: '0 1 72px' }}>
-                          <input
-                            type="number"
-                            inputMode="numeric"
-                            placeholder="Mins"
-                            value={newExercise.minutes}
-                            onChange={e => setNewExercise({ ...newExercise, minutes: e.target.value })}
-                          />
-                        </div>
-                        <button type="submit" className="btn btn-primary" disabled={addingExercise}>
-                          {addingExercise ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
-                        </button>
-                      </form>
-                    </div>
-                  </>
-                )}
-              </>
-            )}
-          </div>
-        </div>
+      {/* One button per day; the dot shows which days have a plan */}
+      <div className="day-picker" role="tablist" aria-label="Day of the week">
+        {DAYS.map((day, i) => {
+          const status = dayStatus(day);
+          return (
+            <button
+              key={day}
+              role="tab"
+              aria-selected={activeDay === day}
+              aria-label={`${day}${i === todayIndex ? ' (today)' : ''}: ${status.label}`}
+              onClick={() => setActiveDay(day)}
+              className={`day-pick ${activeDay === day ? 'is-active' : ''} ${i === todayIndex ? 'is-today' : ''}`}
+            >
+              <span>{SHORT_DAYS[i]}</span>
+              <span className={`day-pick-dot is-${status.kind}`} aria-hidden="true" />
+            </button>
+          );
+        })}
       </div>
+
+      <section className="plan-day" aria-label={`${activeDay} plan`}>
+        <div className="plan-day-head">
+          {isEditingName ? (
+            <form
+              onSubmit={(e) => { e.preventDefault(); setIsEditingName(false); handleUpdateTemplate({ routine_name: routineName }); }}
+              className="plan-name-form"
+            >
+              <input
+                type="text"
+                value={routineName}
+                onChange={(e) => setRoutineName(e.target.value)}
+                aria-label="Workout name"
+                autoFocus
+              />
+              <button type="submit" className="btn btn-primary" aria-label="Save name">
+                <Save size={18} />
+              </button>
+            </form>
+          ) : (
+            <button className="plan-day-name" onClick={() => setIsEditingName(true)} aria-label={`Rename ${routineName}`}>
+              <span>{isRestDay ? 'Rest day' : routineName}</span>
+              {!isRestDay && <Edit3 size={16} />}
+            </button>
+          )}
+          <button
+            onClick={() => handleUpdateTemplate({ is_rest_day: !isRestDay })}
+            className="text-button text-button-quiet"
+          >
+            {isRestDay ? <><Dumbbell size={16} /> Make it a training day</> : <><Coffee size={16} /> Make it a rest day</>}
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="empty-state">
+            <Loader2 size={28} className="animate-spin" style={{ color: 'var(--text-tertiary)' }} />
+          </div>
+        ) : isRestDay ? (
+          <p className="panel plan-empty">Nothing to plan. Rest days count toward your streak.</p>
+        ) : (
+          <>
+            {exercises.length === 0 ? (
+              <p className="panel plan-empty">No exercises yet. Add your first one below.</p>
+            ) : (
+              <ul className="plan-list">
+                {exercises.map((ex, idx) => (
+                  <li
+                    key={ex.id}
+                    data-index={idx}
+                    className={`plan-row ${dragOverIdx === idx ? 'drag-over' : ''} ${draggedIdx === idx ? 'is-dragging' : ''}`}
+                    draggable={activeDragId === ex.id}
+                    onDragStart={(e) => handleDragStart(e, idx)}
+                    onDragEnter={(e) => handleDragEnter(e, idx)}
+                    onDragOver={handleDragOver}
+                    onDragEnd={handleDragEnd}
+                    style={{
+                      borderTopColor: dragOverIdx === idx && draggedIdx > idx ? 'var(--accent)' : undefined,
+                      borderBottomColor: dragOverIdx === idx && draggedIdx < idx ? 'var(--accent)' : undefined,
+                    }}
+                  >
+                    <div className="plan-row-top">
+                      <span
+                        className="plan-grip"
+                        aria-label="Drag to reorder"
+                        onMouseDown={() => setActiveDragId(ex.id)}
+                        onMouseUp={() => setActiveDragId(null)}
+                        onMouseLeave={() => setActiveDragId(null)}
+                        onTouchStart={(e) => handleTouchStart(e, idx)}
+                        onTouchMove={handleTouchMove}
+                        onTouchEnd={handleTouchEnd}
+                      >
+                        <GripVertical size={18} />
+                      </span>
+                      <input
+                        type="text"
+                        list="exercise-suggestions"
+                        className="plan-name"
+                        value={ex.name}
+                        onChange={e => handleLocalChange(ex.id, 'name', e.target.value)}
+                        onBlur={e => handleBlurSave(ex.id, 'name', e.target.value)}
+                        aria-label="Exercise name"
+                      />
+                      <button
+                        onClick={() => removeExercise(ex.id)}
+                        aria-label={`Remove ${ex.name}`}
+                        className="plan-remove"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+                    <div className="plan-fields">
+                      <label className="plan-field">
+                        <span>Sets</span>
+                        <input type="number" inputMode="numeric" className="num" value={ex.sets}
+                          onChange={e => handleLocalChange(ex.id, 'sets', e.target.value)}
+                          onBlur={e => handleBlurSave(ex.id, 'sets', e.target.value)} />
+                      </label>
+                      <label className="plan-field">
+                        <span>Reps</span>
+                        <input type="text" className="num" value={ex.reps}
+                          onChange={e => handleLocalChange(ex.id, 'reps', e.target.value)}
+                          onBlur={e => handleBlurSave(ex.id, 'reps', e.target.value)} />
+                      </label>
+                      <label className="plan-field">
+                        <span>kg</span>
+                        <input type="number" inputMode="decimal" step="0.5" className="num" value={ex.weight}
+                          onChange={e => handleLocalChange(ex.id, 'weight', e.target.value)}
+                          onBlur={e => handleBlurSave(ex.id, 'weight', e.target.value)} />
+                      </label>
+                      <label className="plan-field">
+                        <span>Min</span>
+                        <input type="number" inputMode="numeric" className="num" value={ex.minutes || ''}
+                          onChange={e => handleLocalChange(ex.id, 'minutes', e.target.value)}
+                          onBlur={e => handleBlurSave(ex.id, 'minutes', e.target.value)} />
+                      </label>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {/* Add Exercise Form */}
+            <form onSubmit={handleAddExercise} className="quick-add">
+              <datalist id="exercise-suggestions">
+                {pastExercises.map(name => <option key={name} value={name} />)}
+              </datalist>
+              <label htmlFor="plan-add-name" className="form-label">Add an exercise</label>
+              <input
+                id="plan-add-name"
+                type="text"
+                list="exercise-suggestions"
+                placeholder="Exercise name"
+                value={newExercise.name}
+                onChange={e => setNewExercise({ ...newExercise, name: e.target.value })}
+                required
+              />
+              <div className="quick-add-row">
+                <input type="number" inputMode="numeric" min="0" placeholder="Sets" aria-label="Sets"
+                  value={newExercise.sets} onChange={e => setNewExercise({ ...newExercise, sets: e.target.value })} />
+                <input type="text" placeholder="Reps" aria-label="Reps"
+                  value={newExercise.reps} onChange={e => setNewExercise({ ...newExercise, reps: e.target.value })} />
+                <input type="number" inputMode="decimal" step="0.5" placeholder="kg" aria-label="Weight in kg"
+                  value={newExercise.weight} onChange={e => setNewExercise({ ...newExercise, weight: e.target.value })} />
+                <input type="number" inputMode="numeric" placeholder="Min" aria-label="Minutes"
+                  value={newExercise.minutes} onChange={e => setNewExercise({ ...newExercise, minutes: e.target.value })} />
+                <button type="submit" className="btn btn-primary" disabled={addingExercise} aria-label="Add exercise">
+                  {addingExercise ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
+                </button>
+              </div>
+            </form>
+          </>
+        )}
+      </section>
+
+      {/* The whole week at a glance; tap a day to edit it */}
+      <section aria-labelledby="week-overview-title">
+        <h2 id="week-overview-title" className="section-title">Your week</h2>
+        <ul className="grouped-list">
+          {DAYS.map((day, i) => {
+            const status = dayStatus(day);
+            return (
+              <li key={day} className="week-overview-item">
+                <button className={`week-overview-row ${activeDay === day ? 'is-active' : ''}`} onClick={() => setActiveDay(day)}>
+                  <span className="list-row-main">{day}{i === todayIndex ? ' (today)' : ''}</span>
+                  <span className={`week-overview-plan is-${status.kind}`}>{status.label}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
     </div>
   );
 }

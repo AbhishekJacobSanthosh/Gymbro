@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateStreak, calculateVolume, parseReps, getActiveTemplates, getRestDays, getLevelProgress, workoutCompletedAt, lastPerformanceByName, plannedSetDrafts, formatSet } from './utils.js';
+import { calculateStreak, calculateVolume, parseReps, getActiveTemplates, getRestDays, getLevelProgress, workoutCompletedAt, lastPerformanceByName, plannedSetDrafts, formatSet, buildWeek } from './utils.js';
 
 // Fixed "today": Saturday 17 Oct 2026, noon local time
 beforeEach(() => mock.timers.enable({ apis: ['Date'], now: new Date(2026, 9, 17, 12) }));
@@ -122,4 +122,19 @@ test('formatSet shows weight × reps, or reps alone for bodyweight', () => {
   assert.equal(formatSet({ reps: '10', weight: '82.5' }), '82.5 × 10');
   assert.equal(formatSet({ reps: '12', weight: 0 }), '12');
   assert.equal(formatSet(undefined), null);
+});
+
+test('week strip: Sunday to Saturday with trained, planned and rest days', () => {
+  // Today (mocked) is Saturday 17 Oct 2026, so the week is Sun 11 to Sat 17
+  const templates = {
+    Monday: { is_rest_day: false, exercises: [{}] },
+    Wednesday: { is_rest_day: true, exercises: [] },
+    Thursday: { is_rest_day: false, exercises: [] }, // empty template, opened in the Planner only
+  };
+  const week = buildWeek([new Date(2026, 9, 12, 18).toISOString(), new Date(2026, 9, 10, 9).toISOString()], templates);
+  assert.deepEqual(week.map(d => d.letter + d.date), ['S11', 'M12', 'T13', 'W14', 'T15', 'F16', 'S17']);
+  assert.deepEqual(week.filter(d => d.trained).map(d => d.name), ['Monday']); // the 10th was last week
+  assert.deepEqual(week.filter(d => d.planned).map(d => d.name), ['Monday']);
+  assert.deepEqual(week.filter(d => d.rest).map(d => d.name), ['Wednesday']);
+  assert.equal(week.find(d => d.isToday).name, 'Saturday');
 });

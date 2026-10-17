@@ -118,7 +118,7 @@ function Sidebar({ onLogout }) {
           className="nav-item w-full"
         >
           <LogOut size={20} />
-          <span>Sign Out</span>
+          <span>Sign out</span>
         </button>
       </div>
     </aside>

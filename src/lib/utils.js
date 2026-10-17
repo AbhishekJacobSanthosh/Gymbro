@@ -100,6 +100,36 @@ export function formatSet(set) {
   return weight > 0 ? `${weight} × ${set.reps}` : `${set.reps}`;
 }
 
+// This week (Sunday first, like the Planner) for the dashboard strip.
+// trained: a workout was finished that day; planned: a template with exercises; rest: a rest-day template.
+export function buildWeek(completedDates, templatesByDay, today = new Date()) {
+  const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const start = new Date(today);
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - start.getDay());
+  const trainedDays = new Set(completedDates.map(d => {
+    const date = new Date(d);
+    date.setHours(0, 0, 0, 0);
+    return date.getTime();
+  }));
+
+  return DAY_NAMES.map((name, i) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + i);
+    const template = templatesByDay[name];
+    return {
+      name,
+      letter: name[0],
+      date: date.getDate(),
+      trained: trainedDays.has(date.getTime()),
+      planned: !!template && !template.is_rest_day && template.exercises?.length > 0,
+      rest: !!template?.is_rest_day,
+      isToday: i === today.getDay(),
+      isFuture: date > today,
+    };
+  });
+}
+
 // Newest template per weekday. Skips history and in-progress spontaneous workouts.
 export function getActiveTemplates(workouts) {
   const byDay = {};

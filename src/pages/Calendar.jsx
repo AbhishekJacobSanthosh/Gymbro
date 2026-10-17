@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Flame, Loader2, X, Check } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Flame, Loader2, X, Check } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../App';
 import { calculateStreak, getActiveTemplates, getRestDays } from '../lib/utils';
@@ -274,252 +274,191 @@ export default function Calendar({ session }) {
   };
 
   const todayDate = new Date();
-
-  // Get user initials for avatar
+  const monthLabel = `${currentDate.toLocaleString('default', { month: 'long' })} ${currentDate.getFullYear()}`;
   const getInitial = (name) => name ? name.charAt(0).toUpperCase() : '?';
+  const formatLoggedSet = (set) => (parseFloat(set.weight) || 0) > 0 ? `${set.weight} kg × ${set.reps}` : `${set.reps} reps`;
+  const planSummary = (ex) => [
+    ex.sets > 0 && ex.reps && ex.reps !== '0' ? `${ex.sets} × ${ex.reps}` : null,
+    ex.weight > 0 ? `${ex.weight} kg` : null,
+    ex.minutes > 0 ? `${ex.minutes} min` : null,
+  ].filter(Boolean).join(', ');
 
   return (
-    <div className="flex-col gap-5" style={{ display: 'flex' }}>
+    <div className="consistency">
       <header className="page-header">
         <h1 className="page-title">Consistency</h1>
-        <p className="page-subtitle">Track your progress and build habits.</p>
+        <p className="page-subtitle">Who trained when. Tap a day to see or log a workout.</p>
       </header>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 'var(--space-5)' }}>
-        {/* Calendar + Leaderboard layout */}
-        <div className="flex gap-5" style={{ flexWrap: 'wrap' }}>
-
-          {/* Main Calendar */}
-          <div className="card" style={{ flex: '2 1 400px' }}>
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center gap-3">
-                <div className="stat-icon" style={{ backgroundColor: 'var(--accent-soft)', width: '36px', height: '36px' }}>
-                  <CalendarIcon size={18} style={{ color: 'var(--accent)' }} />
-                </div>
-                <h2 style={{ fontSize: '1.0625rem', fontWeight: 600 }}>
-                  {currentDate.toLocaleString('default', { month: 'long' })} {currentDate.getFullYear()}
-                </h2>
-              </div>
-              <div className="flex gap-2">
-                <button onClick={prevMonth} className="btn btn-secondary btn-icon">
-                  <ChevronLeft size={18} />
-                </button>
-                <button onClick={nextMonth} className="btn btn-secondary btn-icon">
-                  <ChevronRight size={18} />
-                </button>
-              </div>
+      <div className="consistency-grid">
+        <section className="panel calendar-panel" aria-label={monthLabel}>
+          <div className="calendar-head">
+            <h2 className="section-title">{monthLabel}</h2>
+            <div className="calendar-nav">
+              <button onClick={prevMonth} className="icon-button" aria-label="Previous month">
+                <ChevronLeft size={20} />
+              </button>
+              <button onClick={nextMonth} className="icon-button" aria-label="Next month">
+                <ChevronRight size={20} />
+              </button>
             </div>
-
-            {loading ? (
-              <div className="empty-state">
-                <Loader2 size={28} className="animate-spin" style={{ color: 'var(--text-tertiary)' }} />
-              </div>
-            ) : (
-              <div className="calendar-grid">
-                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-                  <div key={day} className="calendar-header-cell">{day}</div>
-                ))}
-
-                {blanks.map(blank => (
-                  <div key={`blank-${blank}`} className="calendar-blank" />
-                ))}
-
-                {days.map(day => {
-                  const dayData = activityData[day] || [];
-                  const hasActivity = dayData.length > 0;
-
-                  const isToday = day === todayDate.getDate() &&
-                    currentDate.getMonth() === todayDate.getMonth() &&
-                    currentDate.getFullYear() === todayDate.getFullYear();
-
-                  return (
-                    <div
-                      key={day}
-                      onClick={() => handleDayClick(day)}
-                      className={`calendar-day ${hasActivity ? 'has-activity' : ''} ${isToday ? 'is-today' : ''}`}
-                    >
-                      <span>{day}</span>
-                      <div className="calendar-dots">
-                        {activityData[day] && activityData[day].map(userId => {
-                          const p = profiles.find(profile => profile.id === userId);
-                          if (!p) return null;
-                          return <div key={userId} className="calendar-dot" style={{ backgroundColor: p.color }} title={p.name} />;
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
           </div>
 
-          {/* Sidebar: Leaderboard */}
-          <div style={{ flex: '1 1 240px', display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-            <div className="card" style={{ padding: 'var(--space-5)' }}>
-              <div className="flex items-center gap-2 mb-5">
-                <Flame size={18} style={{ color: 'var(--accent)' }} />
-                <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>Leaderboard</h3>
-              </div>
-              <div className="flex-col" style={{ display: 'flex', gap: '16px' }}>
-                {profiles.map((p, index) => (
-                  <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div className="flex items-center gap-3">
-                      <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-tertiary)', width: '16px' }}>
-                        {index + 1}
-                      </span>
-                      <div style={{
-                        width: '32px', height: '32px', borderRadius: 'var(--radius-full)',
-                        background: `${p.color}20`, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: '0.8125rem', fontWeight: 700, color: p.color
-                      }}>
-                        {getInitial(p.name)}
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column' }}>
-                        <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>{p.name}</span>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>Lvl {p.level} • {p.xp} XP</span>
-                      </div>
-                    </div>
-                    {p.streak > 0 ? (
-                      <div className="flex items-center gap-1" title={`${p.streak} Day Streak`}>
-                        <Flame size={14} style={{ color: p.color }} />
-                        <span style={{ fontSize: '0.75rem', fontWeight: 700, color: p.color }}>{p.streak}</span>
-                      </div>
-                    ) : (
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>💤</span>
-                    )}
-                  </div>
-                ))}
-              </div>
+          {loading ? (
+            <div className="empty-state">
+              <Loader2 size={28} className="animate-spin" style={{ color: 'var(--text-tertiary)' }} />
             </div>
-
-            {/* Legend */}
-            <div style={{ display: 'flex', gap: 'var(--space-4)', padding: 'var(--space-3)', justifyContent: 'center', flexWrap: 'wrap' }}>
-              {profiles.map(p => (
-                <div key={p.id} className="flex items-center gap-2">
-                  <div className="calendar-dot" style={{ backgroundColor: p.color, width: '8px', height: '8px' }} />
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>{p.name}</span>
-                </div>
+          ) : (
+            <div className="calendar-grid">
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+                <div key={day} className="calendar-header-cell" aria-hidden="true">{day}</div>
               ))}
+
+              {blanks.map(blank => (
+                <div key={`blank-${blank}`} className="calendar-blank" />
+              ))}
+
+              {days.map(day => {
+                const trainedIds = activityData[day] || [];
+                const isToday = day === todayDate.getDate() &&
+                  currentDate.getMonth() === todayDate.getMonth() &&
+                  currentDate.getFullYear() === todayDate.getFullYear();
+                const names = trainedIds.map(id => profiles.find(p => p.id === id)?.name).filter(Boolean);
+
+                return (
+                  <button
+                    key={day}
+                    onClick={() => handleDayClick(day)}
+                    className={`calendar-day ${trainedIds.length ? 'has-activity' : ''} ${isToday ? 'is-today' : ''}`}
+                    aria-label={`${day} ${monthLabel}${names.length ? `, trained: ${names.join(', ')}` : ''}`}
+                  >
+                    <span className="num">{day}</span>
+                    <span className="calendar-dots" aria-hidden="true">
+                      {trainedIds.map(userId => {
+                        const p = profiles.find(profile => profile.id === userId);
+                        return p ? <span key={userId} className="calendar-dot" style={{ backgroundColor: p.color }} /> : null;
+                      })}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-          </div>
-        </div>
+          )}
+        </section>
+
+        {/* Leaderboard: each person in their own colour */}
+        <section aria-labelledby="leaderboard-title">
+          <h2 id="leaderboard-title" className="section-title">Leaderboard</h2>
+          <ol className="grouped-list leaderboard">
+            {profiles.map((p, index) => (
+              <li key={p.id} className="leader-row">
+                <span className="leader-rank num">{index + 1}</span>
+                <span className="leader-avatar" style={{ backgroundColor: p.color }} aria-hidden="true">{getInitial(p.name)}</span>
+                <span className="leader-main">
+                  <strong>{p.name}{p.id === session.user.id ? ' (you)' : ''}</strong>
+                  <span>Level {p.level}, {p.xp} XP</span>
+                </span>
+                <span className={`leader-streak ${p.streak > 0 ? '' : 'is-zero'}`}>
+                  {p.streak > 0 && <Flame size={16} style={{ color: p.color }} aria-hidden="true" />}
+                  <span className="num">{p.streak}</span>
+                  <span className="sr-only">day streak</span>
+                </span>
+              </li>
+            ))}
+          </ol>
+        </section>
       </div>
 
-      {/* Retroactive Logging Modal / Bottom Sheet */}
+      {/* Day sheet: history for that day, or log a past workout */}
       {modalOpen && (
         <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setModalOpen(false); }}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            {/* Drag handle for mobile */}
-            <div className="modal-drag-handle" style={{ display: 'none' }} />
-            <style>{`@media (max-width: 640px) { .modal-drag-handle { display: block !important; } }`}</style>
-
-            <button
-              onClick={() => setModalOpen(false)}
-              className="modal-close"
-            >
+          <div className="modal-content" role="dialog" aria-modal="true" aria-labelledby="day-sheet-title" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-drag-handle" />
+            <button onClick={() => setModalOpen(false)} className="modal-close" aria-label="Close">
               <X size={20} />
             </button>
 
-            <h2 className="modal-title">{historicalWorkouts.length > 0 ? 'Workout History' : 'Log Workout'}</h2>
-            <p className="modal-subtitle">{selectedDate?.toDateString()}</p>
+            <h2 id="day-sheet-title" className="modal-title">{historicalWorkouts.length > 0 ? 'Workout history' : 'Log a past workout'}</h2>
+            <p className="modal-subtitle">
+              {selectedDate?.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}
+            </p>
 
             {modalLoading ? (
               <div className="empty-state">
                 <Loader2 size={28} className="animate-spin" style={{ color: 'var(--text-tertiary)' }} />
               </div>
             ) : historicalWorkouts.length > 0 ? (
-              <div className="flex-col gap-4" style={{ display: 'flex' }}>
+              <div className="history-list">
                 {historicalWorkouts.map(w => (
-                  <div key={w.id} className="card" style={{ padding: 'var(--space-4)' }}>
-                    <div className="flex justify-between items-center mb-3">
-                      <h3 style={{ fontSize: '1.0625rem', fontWeight: 600 }}>{w.routine_name}</h3>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-                        {new Date(w.completed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
+                  <article key={w.id} className="history-item">
+                    <div className="history-head">
+                      <h3>{w.routine_name}</h3>
+                      <span className="num">{new Date(w.completed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
                     {w.is_rest_day ? (
-                      <p style={{ color: 'var(--text-secondary)' }}>Rest Day</p>
+                      <p className="history-note">Rest day</p>
                     ) : (
-                      <div className="flex-col gap-2" style={{ display: 'flex' }}>
+                      <ul className="history-exercises">
                         {(w.exercises || []).map(ex => {
-                          const hasLoggedSets = ex.logged_sets && Object.keys(ex.logged_sets).length > 0;
+                          const loggedSets = Object.entries(ex.logged_sets || {});
                           return (
-                            <div key={ex.id} style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.875rem', marginBottom: '8px' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <span style={{ fontWeight: 500 }}>{ex.name}</span>
-                                {!hasLoggedSets && (
-                                  <span style={{ color: 'var(--text-secondary)' }}>
-                                    {ex.sets > 0 && `${ex.sets} Sets `} 
-                                    {ex.reps && ex.reps !== '0' && `${ex.reps} Reps `}
-                                    {ex.weight > 0 && `${ex.weight}kg `}
-                                    {ex.minutes > 0 && `${ex.minutes}m`}
-                                  </span>
-                                )}
+                            <li key={ex.id}>
+                              <div className="history-exercise">
+                                <span>{ex.name}</span>
+                                {loggedSets.length === 0 && <span className="history-plan">{planSummary(ex)}</span>}
                               </div>
-                              {hasLoggedSets && (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', paddingLeft: '8px', borderLeft: '2px solid var(--border)', marginTop: '2px' }}>
-                                  {Object.entries(ex.logged_sets).map(([idx, set]) => (
-                                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                              {loggedSets.length > 0 && (
+                                <ol className="history-sets">
+                                  {loggedSets.map(([idx, set]) => (
+                                    <li key={idx}>
                                       <span>Set {parseInt(idx) + 1}</span>
-                                      <span>{set.reps} Reps • {set.weight}kg</span>
-                                    </div>
+                                      <span className="num">{formatLoggedSet(set)}</span>
+                                    </li>
                                   ))}
-                                </div>
+                                </ol>
                               )}
-                            </div>
+                            </li>
                           );
                         })}
-                      </div>
+                      </ul>
                     )}
-                  </div>
+                  </article>
                 ))}
               </div>
             ) : !activeTemplate ? (
-              <div className="empty-state">
-                <CalendarIcon size={28} className="empty-state-icon" />
-                <p className="empty-state-text">No template found for this day. Go to the Planner to create one first.</p>
-              </div>
+              <p className="history-note">Nothing planned for this weekday. Set it up in the Planner first.</p>
             ) : activeTemplate.is_rest_day ? (
-              <div className="empty-state">
-                <p className="empty-state-text">This day was scheduled as a Rest Day.</p>
-              </div>
+              <p className="history-note">This was a rest day.</p>
             ) : dayExercises.length === 0 ? (
-              <div className="empty-state">
-                <p className="empty-state-text">No exercises in this template. Add them in the Planner first.</p>
-              </div>
+              <p className="history-note">This day's plan has no exercises yet. Add them in the Planner first.</p>
             ) : (
-              <div className="flex-col gap-1" style={{ display: 'flex' }}>
+              <div className="retro-list">
+                <p className="history-note">Tick what you did. Changes to reps and weight also update your plan.</p>
                 {dayExercises.map(ex => (
-                  <div
-                    key={ex.id}
-                    className="exercise-row"
-                    style={{ opacity: ex.completed ? 0.5 : 1 }}
-                  >
+                  <div key={ex.id} className="exercise-row" style={{ opacity: ex.completed ? 0.6 : 1 }}>
                     <button
                       onClick={() => toggleComplete(ex.id, ex.completed)}
                       className={`exercise-check ${ex.completed ? 'checked' : ''}`}
+                      aria-label={`Mark ${ex.name} ${ex.completed ? 'not done' : 'done'}`}
                     >
                       <Check size={16} />
                     </button>
 
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <h3 className={`exercise-name ${ex.completed ? 'completed' : ''}`}>
-                        {ex.name}
-                      </h3>
+                      <h3 className={`exercise-name ${ex.completed ? 'completed' : ''}`}>{ex.name}</h3>
                       <div className="exercise-meta">
-                        <span style={{ fontWeight: 500 }}>{ex.sets} Sets</span>
-                        <div className="exercise-meta-dot" />
-                        <div className="flex items-center gap-1">
+                        <span>{ex.sets} sets</span>
+                        <label className="flex items-center gap-1">
                           <input
                             type="text"
                             value={ex.reps}
                             onChange={e => handleLocalChange(ex.id, 'reps', e.target.value)}
                             className="exercise-inline-input"
+                            aria-label={`${ex.name} reps`}
                           />
-                          <span>Reps</span>
-                        </div>
-                        <div className="exercise-meta-dot" />
-                        <div className="flex items-center gap-1">
+                          <span>reps</span>
+                        </label>
+                        <label className="flex items-center gap-1">
                           <input
                             type="number"
                             inputMode="decimal"
@@ -527,10 +466,10 @@ export default function Calendar({ session }) {
                             value={ex.weight}
                             onChange={e => handleLocalChange(ex.id, 'weight', e.target.value)}
                             className="exercise-inline-input"
-                            style={{ width: '50px' }}
+                            aria-label={`${ex.name} weight in kg`}
                           />
                           <span>kg</span>
-                        </div>
+                        </label>
                       </div>
                     </div>
                   </div>
@@ -541,23 +480,10 @@ export default function Calendar({ session }) {
                   disabled={saving || !dayExercises.every(ex => ex.completed)}
                   className="btn btn-primary btn-lg w-full mt-6"
                 >
-                  {saving ? (
-                    <>
-                      <Loader2 size={18} className="animate-spin" />
-                      <span>Saving...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Check size={18} />
-                      <span>Finish Workout</span>
-                    </>
-                  )}
+                  {saving ? <><Loader2 size={18} className="animate-spin" /> Saving</> : <><Check size={18} /> Save workout</>}
                 </button>
-
                 {!dayExercises.every(ex => ex.completed) && (
-                  <p style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem', textAlign: 'center', marginTop: 'var(--space-2)' }}>
-                    Complete all exercises to finish
-                  </p>
+                  <p className="history-note" style={{ textAlign: 'center' }}>Tick every exercise to save.</p>
                 )}
               </div>
             )}

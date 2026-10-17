@@ -23,7 +23,7 @@ export default function Login() {
         if (error) throw error;
         
         if (!data?.session) {
-          setMessage('success:Check your email for the login link!');
+          setMessage('success:Check your email to confirm your account, then sign in.');
         }
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -66,21 +66,21 @@ export default function Login() {
 
         <div className="login-hero-content">
           <h1 className="login-hero-title">
-            Track Together.<br />Grow Together.
+            Track together.<br />Grow together.
           </h1>
           <p className="login-hero-subtitle">
-            Stay consistent, push your limits, and celebrate PRs with your training partner.
+            Log every set, keep your streak, and see your friends train.
           </p>
-          <div className="login-scroll-indicator">
-            <p style={{ fontSize: '0.8125rem', fontWeight: 500 }}>Swipe up to login</p>
-            <div className="bounce-arrow">↓</div>
+          <div className="login-scroll-indicator" aria-hidden="true">
+            <p>Scroll down to sign in</p>
+            <span>↓</span>
           </div>
         </div>
       </div>
 
       {/* Form Section — slides over hero */}
       <div className="login-form-section">
-        <div className="login-form-wrapper animate-fade-in-up">
+        <div className="login-form-wrapper">
           {/* Brand */}
           <div className="login-brand">
             <Dumbbell className="text-accent" size={36} />
@@ -89,7 +89,7 @@ export default function Login() {
 
           <p className="login-welcome">
             {isSignUp
-              ? 'Create an account to start tracking your workouts.'
+              ? 'Create an account to start logging your workouts.'
               : 'Welcome back! Sign in to continue your streak.'}
           </p>
 
@@ -152,10 +152,10 @@ export default function Login() {
               {loading ? (
                 <>
                   <Loader2 size={18} className="animate-spin" />
-                  <span>Please wait...</span>
+                  <span>One moment</span>
                 </>
               ) : (
-                isSignUp ? 'Create Account' : 'Sign In'
+                isSignUp ? 'Create account' : 'Sign in'
               )}
             </button>
           </form>
@@ -166,7 +166,7 @@ export default function Login() {
             <button
               onClick={() => { setIsSignUp(!isSignUp); setMessage(''); }}
             >
-              {isSignUp ? 'Sign In' : 'Sign Up'}
+              {isSignUp ? 'Sign in' : 'Sign up'}
             </button>
           </div>
         </div>

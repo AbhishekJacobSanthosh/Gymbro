@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Save, LogOut, Loader2, Mail, Medal, Award, Snowflake, Check, Plus } from 'lucide-react';
+import { Save, LogOut, Loader2, Medal, Snowflake, Check, Plus } from 'lucide-react';
 import { useToast } from '../App';
 import { calculateStreak, getActiveTemplates, getRestDays, getLevelProgress } from '../lib/utils';
 import { confirmSignOut } from '../lib/offline';
@@ -135,229 +135,141 @@ export default function Profile({ session }) {
     return '?';
   };
 
+  const { progress, nextLevelXp } = getLevelProgress(xp, level);
+
   return (
-    <div className="flex-col gap-5" style={{ display: 'flex' }}>
-      <header className="page-header">
-        <h1 className="page-title">Profile</h1>
-        <p className="page-subtitle">Customize how you appear on the leaderboard and calendar.</p>
+    <div className="profile">
+      <header className="profile-hero">
+        <div className="profile-avatar">
+          <div className="profile-avatar-inner">
+            {loading ? <Loader2 size={24} className="animate-spin" /> : <span>{getInitial()}</span>}
+          </div>
+        </div>
+        <div className="profile-hero-text">
+          <h1 className="page-title">{displayName || 'Your profile'}</h1>
+          <p className="page-subtitle">{session?.user?.email}</p>
+        </div>
       </header>
 
-      <div className="card" style={{ maxWidth: '480px' }}>
-        {/* Avatar & Info */}
-        <div className="flex items-center gap-5 mb-8">
-          <div className="profile-avatar">
-            <div className="profile-avatar-inner">
-              {loading ? (
-                <Loader2 size={24} className="animate-spin" style={{ color: 'var(--text-tertiary)' }} />
-              ) : (
-                <span style={{ fontSize: '1.5rem', fontWeight: 800 }}>{getInitial()}</span>
-              )}
-            </div>
-          </div>
-          <div style={{ flex: 1 }}>
-            <h2 style={{ fontSize: '1.125rem', fontWeight: 600 }}>
-              {loading ? (
-                <span className="skeleton skeleton-text" style={{ width: '120px', display: 'inline-block' }} />
-              ) : (
-                displayName || 'Set your name'
-              )}
-            </h2>
-            <div className="flex items-center gap-2 mt-1">
-              <Mail size={13} style={{ color: 'var(--text-tertiary)' }} />
-              <p style={{ color: 'var(--text-tertiary)', fontSize: '0.8125rem' }}>
-                {session?.user?.email}
-              </p>
-            </div>
+      <section className="panel profile-level" aria-label="Level">
+        <div className="profile-level-row">
+          <span className="profile-level-label">Level <strong className="num">{level}</strong></span>
+          <span className="num profile-level-xp">{xp} / {nextLevelXp} XP</span>
+        </div>
+        <div className="today-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)} aria-label="Progress to next level">
+          <span style={{ width: `${progress}%` }} />
+        </div>
+        <p className="profile-shields">
+          <Snowflake size={14} aria-hidden="true" /> {gracePeriodsRemaining} shield{gracePeriodsRemaining === 1 ? '' : 's'} left this month
+        </p>
+      </section>
 
-            {/* Gamification Stats */}
-            {!loading && (
-              <div style={{ marginTop: 'var(--space-4)', backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border)', padding: 'var(--space-3)', borderRadius: 'var(--radius-md)' }}>
-                <div className="flex justify-between items-center mb-2">
-                  <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--accent)' }}>Level {level}</span>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>{xp} XP total</span>
-                </div>
-                <div style={{ height: '6px', backgroundColor: 'var(--bg-elevated)', borderRadius: '3px', overflow: 'hidden' }}>
-                  <div style={{ 
-                    height: '100%', 
-                    width: `${getLevelProgress(xp, level).progress}%`,
-                    backgroundColor: 'var(--accent)', 
-                    borderRadius: '3px' 
-                  }} />
-                </div>
-                <div className="flex justify-between items-center" style={{ marginTop: 'var(--space-2)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--text-tertiary)', fontSize: '0.75rem' }}>
-                    <Snowflake size={12} /> {gracePeriodsRemaining} Shield{gracePeriodsRemaining !== 1 ? 's' : ''} Left this Month
-                  </div>
-                  <p style={{ fontSize: '0.6875rem', color: 'var(--text-tertiary)', textAlign: 'right' }}>
-                    Next level: {getLevelProgress(xp, level).nextLevelXp} XP
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
+      <form onSubmit={updateProfile} className="profile-form">
+        <div className="form-group">
+          <label className="form-label" htmlFor="display-name">Name</label>
+          <input
+            id="display-name"
+            type="text"
+            placeholder="e.g. John or Sis"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            autoComplete="nickname"
+          />
+          <p className="form-hint">How friends see you on the calendar and in the feed.</p>
         </div>
 
-        {/* Form */}
-        <form onSubmit={updateProfile} className="flex-col gap-5" style={{ display: 'flex' }}>
-          <div className="form-group">
-            <label className="form-label">Display Name</label>
-            <input
-              type="text"
-              placeholder="e.g. John or Sis"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-            />
-            <p className="form-hint">This is how others will see you on the calendar and activity feed.</p>
-          </div>
-
-          <fieldset className="form-group accent-picker">
-            <legend className="form-label">Your colour</legend>
-            <div className="swatches">
-              {PRESETS.map(c => (
-                <button
-                  key={c}
-                  type="button"
-                  className={`swatch ${color === c ? 'selected' : ''}`}
-                  style={{ backgroundColor: c }}
-                  onClick={() => pickColor(c)}
-                  aria-label={`Use colour ${c}`}
-                  aria-pressed={color === c}
-                />
-              ))}
-              {/* The phone's own colour picker: spectrum, sliders and eyedropper */}
-              <label
-                className={`swatch swatch-custom ${PRESETS.includes(color) ? '' : 'selected'}`}
-                style={PRESETS.includes(color) ? undefined : { backgroundColor: color }}
-              >
-                <input
-                  type="color"
-                  value={color}
-                  onChange={(e) => pickColor(e.target.value)}
-                  aria-label="Pick any colour"
-                />
-                {PRESETS.includes(color) && <Plus size={16} />}
-              </label>
-            </div>
-
-            <div className="accent-hex">
-              <label htmlFor="accent-hex" className="sr-only">Hex code</label>
-              <span className="accent-hex-dot" style={{ backgroundColor: readable }} />
-              <input
-                id="accent-hex"
-                type="text"
-                value={hexDraft}
-                onChange={(e) => handleHexChange(e.target.value)}
-                maxLength={7}
-                autoCapitalize="characters"
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="#FF7854"
-                aria-invalid={!normalizeHex(hexDraft)}
+        <fieldset className="form-group accent-picker">
+          <legend className="form-label">Your colour</legend>
+          <div className="swatches">
+            {PRESETS.map(c => (
+              <button
+                key={c}
+                type="button"
+                className={`swatch ${color === c ? 'selected' : ''}`}
+                style={{ backgroundColor: c }}
+                onClick={() => pickColor(c)}
+                aria-label={`Use colour ${c}`}
+                aria-pressed={color === c}
               />
-            </div>
-
-            <div className="accent-preview" aria-hidden="true">
-              <span className="accent-preview-check"><Check size={14} strokeWidth={3} /></span>
-              <span className="num accent-preview-set">82.5 kg × 8</span>
-              <span className="btn btn-primary btn-sm">Finish workout</span>
-            </div>
-
-            <p className="form-hint">
-              {!normalizeHex(hexDraft)
-                ? 'Enter a 6-digit hex code, like #3B82F6.'
-                : wasAdjusted
-                  ? `Lightened to ${readable.toUpperCase()} so it stays readable on black.`
-                  : 'Colours the whole app for you, and marks you on the calendar for everyone.'}
-            </p>
-          </fieldset>
-
-          <button
-            className="btn btn-primary"
-            type="submit"
-            disabled={saving || loading}
-            style={{ alignSelf: 'flex-start' }}
-          >
-            {saving ? (
-              <>
-                <Loader2 size={16} className="animate-spin" />
-                <span>Saving...</span>
-              </>
-            ) : (
-              <>
-                <Save size={16} />
-                <span>Save Profile</span>
-              </>
-            )}
-          </button>
-        </form>
-      </div>
-
-      {/* Achievements Section */}
-      <div className="card" style={{ maxWidth: '480px' }}>
-        <div className="flex items-center gap-3 mb-5">
-          <div className="stat-icon" style={{ backgroundColor: 'var(--warning-soft)', width: '36px', height: '36px' }}>
-            <Award size={18} style={{ color: 'var(--warning)' }} />
+            ))}
+            {/* The phone's own colour picker: spectrum, sliders and eyedropper */}
+            <label
+              className={`swatch swatch-custom ${PRESETS.includes(color) ? '' : 'selected'}`}
+              style={PRESETS.includes(color) ? undefined : { backgroundColor: color }}
+            >
+              <input
+                type="color"
+                value={color}
+                onChange={(e) => pickColor(e.target.value)}
+                aria-label="Pick any colour"
+              />
+              {PRESETS.includes(color) && <Plus size={16} />}
+            </label>
           </div>
-          <h2 style={{ fontSize: '1.0625rem', fontWeight: 600 }}>Achievements</h2>
-        </div>
 
+          <div className="accent-hex">
+            <label htmlFor="accent-hex" className="sr-only">Hex code</label>
+            <span className="accent-hex-dot" style={{ backgroundColor: readable }} />
+            <input
+              id="accent-hex"
+              type="text"
+              value={hexDraft}
+              onChange={(e) => handleHexChange(e.target.value)}
+              maxLength={7}
+              autoCapitalize="characters"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="#FF7854"
+              aria-invalid={!normalizeHex(hexDraft)}
+            />
+          </div>
+
+          <div className="accent-preview" aria-hidden="true">
+            <span className="accent-preview-check"><Check size={14} strokeWidth={3} /></span>
+            <span className="num accent-preview-set">82.5 kg × 8</span>
+            <span className="btn btn-primary btn-sm">Finish workout</span>
+          </div>
+
+          <p className="form-hint">
+            {!normalizeHex(hexDraft)
+              ? 'Enter a 6-digit hex code, like #3B82F6.'
+              : wasAdjusted
+                ? `Lightened to ${readable.toUpperCase()} so it stays readable on black.`
+                : 'Colours the whole app for you, and marks you on the calendar for everyone.'}
+          </p>
+        </fieldset>
+
+        <button className="btn btn-primary btn-lg" type="submit" disabled={saving || loading}>
+          {saving ? <><Loader2 size={18} className="animate-spin" /> Saving</> : <><Save size={18} /> Save profile</>}
+        </button>
+      </form>
+
+      <section aria-labelledby="badges-title">
+        <h2 id="badges-title" className="section-title">Achievements</h2>
         {loading ? (
-          <div className="flex justify-center" style={{ padding: 'var(--space-4) 0' }}>
+          <div className="empty-state">
             <Loader2 size={24} className="animate-spin" style={{ color: 'var(--text-tertiary)' }} />
           </div>
         ) : achievements.length === 0 ? (
-          <div className="empty-state" style={{ padding: 'var(--space-4) 0' }}>
-            <Medal size={28} className="empty-state-icon" />
-            <p className="empty-state-text">No achievements yet. Keep grinding!</p>
-          </div>
+          <p className="panel plan-empty">No badges yet. Finish workouts to earn them.</p>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-4)' }}>
+          <ul className="grouped-list">
             {achievements.map((ach) => (
-              <div key={ach.id} style={{ 
-                padding: 'var(--space-3)', 
-                backgroundColor: 'var(--bg-elevated)', 
-                borderRadius: 'var(--radius-md)',
-                border: '1px solid var(--border)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 'var(--space-3)'
-              }}>
-                <div style={{ 
-                  backgroundColor: 'var(--warning-soft)', 
-                  width: '40px', height: '40px', borderRadius: '50%',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center'
-                }}>
-                  <Medal size={20} style={{ color: 'var(--warning)' }} />
-                </div>
-                <div>
-                  <p style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--text-primary)' }}>{ach.badge_name}</p>
-                  {ach.description && <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{ach.description}</p>}
-                </div>
-              </div>
+              <li key={ach.id} className="badge-row">
+                <span className="badge-icon" aria-hidden="true"><Medal size={20} /></span>
+                <span className="badge-text">
+                  <strong>{ach.badge_name}</strong>
+                  {ach.description && <span>{ach.description}</span>}
+                </span>
+              </li>
             ))}
-          </div>
+          </ul>
         )}
-      </div>
+      </section>
 
-      {/* Sign Out Section — visible on mobile where it's hidden from nav */}
-      <div className="card signout-card" style={{ maxWidth: '480px' }}>
-        <style>{`
-          .signout-card { display: none; }
-          @media (max-width: 640px) { .signout-card { display: block !important; } }
-        `}</style>
-        <div className="flex items-center justify-between">
-          <div>
-            <p style={{ fontWeight: 600, fontSize: '0.9375rem' }}>Sign Out</p>
-            <p style={{ color: 'var(--text-tertiary)', fontSize: '0.8125rem' }}>
-              You'll need to sign in again next time.
-            </p>
-          </div>
-          <button onClick={handleLogout} className="btn btn-danger btn-sm">
-            <LogOut size={16} />
-            <span>Sign Out</span>
-          </button>
-        </div>
-      </div>
+      <button onClick={handleLogout} className="btn btn-secondary btn-lg profile-signout">
+        <LogOut size={18} /> Sign out
+      </button>
     </div>
   );
 }
