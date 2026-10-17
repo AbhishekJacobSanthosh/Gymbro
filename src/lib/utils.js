@@ -65,6 +65,41 @@ export function workoutCompletedAt(startedAt, lastActivityAt, now = new Date()) 
   return new Date(Math.min(new Date(lastActivityAt ?? start).getTime(), endOfStartDay.getTime()));
 }
 
+// What you did last time, per exercise name (case-insensitive): [{ reps, weight }] per set.
+// `rows` are finished exercises, newest first.
+export function lastPerformanceByName(rows) {
+  const byName = {};
+  for (const row of rows || []) {
+    const name = row.name?.trim().toLowerCase();
+    if (!name || byName[name]) continue;
+    const logged = Object.entries(row.logged_sets || {})
+      .sort(([a], [b]) => Number(a) - Number(b))
+      .map(([, set]) => ({ reps: set.reps, weight: set.weight }));
+    byName[name] = logged.length > 0
+      ? logged
+      : Array.from({ length: parseInt(row.sets) || 0 }, () => ({ reps: row.reps, weight: row.weight }));
+  }
+  return byName;
+}
+
+// Starting values for each set's boxes. Weights follow last time set by set, unless the
+// planned weight was changed since (it no longer matches last time's heaviest set).
+export function plannedSetDrafts(sets, reps, weight, lastSets = []) {
+  const top = Math.max(0, ...lastSets.map(set => parseFloat(set.weight) || 0));
+  const followLast = lastSets.length > 0 && (parseFloat(weight) || 0) === top;
+  return Object.fromEntries(Array.from({ length: parseInt(sets) || 0 }, (_, i) => [i, {
+    reps,
+    weight: followLast ? (lastSets[i] ?? lastSets[lastSets.length - 1]).weight : weight,
+  }]));
+}
+
+// "80 × 10", or just "10" for bodyweight
+export function formatSet(set) {
+  if (!set) return null;
+  const weight = parseFloat(set.weight) || 0;
+  return weight > 0 ? `${weight} × ${set.reps}` : `${set.reps}`;
+}
+
 // Newest template per weekday. Skips history and in-progress spontaneous workouts.
 export function getActiveTemplates(workouts) {
   const byDay = {};

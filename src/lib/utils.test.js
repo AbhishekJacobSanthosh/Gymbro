@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateStreak, calculateVolume, parseReps, getActiveTemplates, getRestDays, getLevelProgress, workoutCompletedAt } from './utils.js';
+import { calculateStreak, calculateVolume, parseReps, getActiveTemplates, getRestDays, getLevelProgress, workoutCompletedAt, lastPerformanceByName, plannedSetDrafts, formatSet } from './utils.js';
 
 // Fixed "today": Saturday 17 Oct 2026, noon local time
 beforeEach(() => mock.timers.enable({ apis: ['Date'], now: new Date(2026, 9, 17, 12) }));
@@ -91,4 +91,35 @@ test('a workout is saved to the day it was started', () => {
 test('level progress is clamped to 0-100', () => {
   assert.deepEqual(getLevelProgress(250, 2), { progress: 50, nextLevelXp: 400 });
   assert.equal(getLevelProgress(0, 3).progress, 0);
+});
+
+test('last time per exercise: newest session, logged sets in order, case-insensitive', () => {
+  const rows = [
+    { name: 'Bench Press ', sets: 3, reps: '8-12', weight: 80, logged_sets: { 1: { reps: '9', weight: 82.5 }, 0: { reps: '10', weight: 80 } } },
+    { name: 'bench press', sets: 3, reps: '8', weight: 70, logged_sets: null },
+    { name: 'Plank', sets: 2, reps: '60s', weight: 0, logged_sets: null },
+  ];
+  const last = lastPerformanceByName(rows);
+  assert.deepEqual(last['bench press'], [{ reps: '10', weight: 80 }, { reps: '9', weight: 82.5 }]);
+  assert.deepEqual(last.plank, [{ reps: '60s', weight: 0 }, { reps: '60s', weight: 0 }]);
+});
+
+test('set boxes follow last time unless the plan changed', () => {
+  const lastSets = [{ reps: '10', weight: 60 }, { reps: '8', weight: 80 }];
+  // Plan still equals last time's heaviest set: weights follow last time, extra sets repeat the last one
+  assert.deepEqual(plannedSetDrafts(3, '8-12', 80, lastSets), {
+    0: { reps: '8-12', weight: 60 }, 1: { reps: '8-12', weight: 80 }, 2: { reps: '8-12', weight: 80 },
+  });
+  // Plan raised to 85 in the Planner: use the plan
+  assert.deepEqual(plannedSetDrafts(2, '8-12', 85, lastSets), {
+    0: { reps: '8-12', weight: 85 }, 1: { reps: '8-12', weight: 85 },
+  });
+  // Never done before
+  assert.deepEqual(plannedSetDrafts(1, '5', 100), { 0: { reps: '5', weight: 100 } });
+});
+
+test('formatSet shows weight × reps, or reps alone for bodyweight', () => {
+  assert.equal(formatSet({ reps: '10', weight: '82.5' }), '82.5 × 10');
+  assert.equal(formatSet({ reps: '12', weight: 0 }), '12');
+  assert.equal(formatSet(undefined), null);
 });

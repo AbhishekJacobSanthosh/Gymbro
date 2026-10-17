@@ -189,7 +189,7 @@ function SyncStatus({ userId, online }) {
 
   const plural = (n) => `${n} workout${n === 1 ? '' : 's'}`;
   return (
-    <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap', marginBottom: 'var(--space-4)', padding: 'var(--space-3) var(--space-4)', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border)', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+    <div role="status" className="sync-banner" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap', marginBottom: 'var(--space-4)', padding: 'var(--space-3) var(--space-4)', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border)', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
       <CloudOff size={16} />
       {pending.queued > 0 && (
         <span>{plural(pending.queued)} waiting to sync{online ? '' : ". It'll upload when you have signal"}.</span>
