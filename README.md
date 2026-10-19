@@ -1,6 +1,6 @@
 # GymBro
 
-Workout tracker for two training partners: weekly templates, set-by-set logging, streaks with monthly shields, XP/levels, PRs, badges, a shared calendar and an activity feed.
+Workout tracker for dedicated pros with: weekly templates, set-by-set logging, streaks with monthly shields, XP/levels, PRs, badges, a shared calendar and an activity feed.
 
 React + Vite frontend, Supabase (Postgres + Auth) backend.
 
