@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, Dumbbell, Coffee, Edit3, Save, Loader2, GripVertical } from 'lucide-react';
+import { Plus, Trash2, Dumbbell, Coffee, Edit3, Save, Loader2, GripVertical, ArrowUpDown, ChevronUp, ChevronDown, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../App';
+import { weekRearrangement } from '../lib/utils';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const SHORT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -35,6 +36,10 @@ export default function Templates({ session }) {
   const [weeklyOverview, setWeeklyOverview] = useState({});
   const [pastExercises, setPastExercises] = useState([]);
 
+  // Rearrange week sheet: the 7 plans in their new order (null = sheet closed)
+  const [weekOrder, setWeekOrder] = useState(null);
+  const [savingWeek, setSavingWeek] = useState(false);
+
   useEffect(() => {
     fetchWeeklyOverview();
     fetchPastExercises();
@@ -48,7 +53,7 @@ export default function Templates({ session }) {
     if (!session?.user) return;
     const { data } = await supabase
       .from('workouts')
-      .select('day_of_week, routine_name, is_rest_day, exercises(count)')
+      .select('id, day_of_week, routine_name, is_rest_day, exercises(count)')
       .eq('user_id', session.user.id)
       .eq('completed', false)
       .neq('routine_name', 'Spontaneous Workout')
@@ -59,6 +64,7 @@ export default function Templates({ session }) {
       data.forEach(t => {
         if (!overview[t.day_of_week]) {
           overview[t.day_of_week] = {
+            id: t.id,
             name: t.routine_name || 'Workout',
             rest: !!t.is_rest_day,
             count: t.exercises?.[0]?.count ?? 0,
@@ -301,9 +307,34 @@ export default function Templates({ session }) {
     handleDragEnd();
   };
 
+  const currentWeek = () => DAYS.map(day => weeklyOverview[day] ?? null);
+
+  // Swap the plan on day i with the one on day i + dir
+  const shiftPlan = (i, dir) => setWeekOrder(prev => {
+    const next = [...prev];
+    [next[i], next[i + dir]] = [next[i + dir], next[i]];
+    return next;
+  });
+
+  const saveWeekOrder = async () => {
+    setSavingWeek(true);
+    const { moves, blankDays } = weekRearrangement(currentWeek(), weekOrder, DAYS);
+    // One transaction on the server: a half-saved swap would hide one plan behind another
+    const { error } = await supabase.rpc('rearrange_week', { p_moves: moves, p_blank_days: blankDays });
+    setSavingWeek(false);
+    if (error) {
+      console.error(error);
+      toast?.error(`Couldn't save your new week: ${error.message}`);
+      return;
+    }
+    setWeekOrder(null);
+    fetchWeeklyOverview();
+    fetchTemplateForDay(activeDay);
+    toast?.success('Week rearranged');
+  };
+
   const todayIndex = new Date().getDay();
-  const dayStatus = (day) => {
-    const plan = weeklyOverview[day];
+  const dayStatus = (plan) => {
     if (!plan) return { kind: 'none', label: 'Not planned' };
     if (plan.rest) return { kind: 'rest', label: 'Rest' };
     if (plan.count > 0) return { kind: 'planned', label: `${plan.name}, ${plan.count} exercise${plan.count === 1 ? '' : 's'}` };
@@ -320,7 +351,7 @@ export default function Templates({ session }) {
       {/* One button per day; the dot shows which days have a plan */}
       <div className="day-picker" role="tablist" aria-label="Day of the week">
         {DAYS.map((day, i) => {
-          const status = dayStatus(day);
+          const status = dayStatus(weeklyOverview[day]);
           return (
             <button
               key={day}
@@ -492,10 +523,15 @@ export default function Templates({ session }) {
 
       {/* The whole week at a glance; tap a day to edit it */}
       <section aria-labelledby="week-overview-title">
-        <h2 id="week-overview-title" className="section-title">Your week</h2>
+        <div className="section-head">
+          <h2 id="week-overview-title" className="section-title">Your week</h2>
+          <button className="text-button" onClick={() => setWeekOrder(currentWeek())}>
+            <ArrowUpDown size={16} /> Rearrange
+          </button>
+        </div>
         <ul className="grouped-list">
           {DAYS.map((day, i) => {
-            const status = dayStatus(day);
+            const status = dayStatus(weeklyOverview[day]);
             return (
               <li key={day} className="week-overview-item">
                 <button className={`week-overview-row ${activeDay === day ? 'is-active' : ''}`} onClick={() => setActiveDay(day)}>
@@ -507,6 +543,49 @@ export default function Templates({ session }) {
           })}
         </ul>
       </section>
+
+      {/* Rearrange week: arrows swap neighbouring days, nothing is saved until Save */}
+      {weekOrder && (
+        <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget && !savingWeek) setWeekOrder(null); }}>
+          <div className="modal-content" role="dialog" aria-modal="true" aria-labelledby="rearrange-title" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-drag-handle" />
+            <button onClick={() => setWeekOrder(null)} disabled={savingWeek} className="modal-close" aria-label="Close">
+              <X size={20} />
+            </button>
+
+            <h2 id="rearrange-title" className="modal-title">Rearrange week</h2>
+            <p className="modal-subtitle">Move a plan up or down to swap it with the day next to it.</p>
+
+            <ul className="grouped-list">
+              {weekOrder.map((plan, i) => {
+                const status = dayStatus(plan);
+                return (
+                  <li key={DAYS[i]} className="rearrange-row">
+                    <span className="list-row-main">{SHORT_DAYS[i]}</span>
+                    <span className={`week-overview-plan is-${status.kind}`}>{status.label}</span>
+                    <button className="icon-button" onClick={() => shiftPlan(i, -1)} disabled={i === 0}
+                      aria-label={`Move ${DAYS[i]}'s plan up a day`}>
+                      <ChevronUp size={20} />
+                    </button>
+                    <button className="icon-button" onClick={() => shiftPlan(i, 1)} disabled={i === DAYS.length - 1}
+                      aria-label={`Move ${DAYS[i]}'s plan down a day`}>
+                      <ChevronDown size={20} />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+
+            <button
+              onClick={saveWeekOrder}
+              disabled={savingWeek || weekOrder.every((plan, i) => plan?.id === currentWeek()[i]?.id)}
+              className="btn btn-primary btn-lg w-full mt-6"
+            >
+              {savingWeek ? <><Loader2 size={18} className="animate-spin" /> Saving</> : <><Save size={18} /> Save week</>}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

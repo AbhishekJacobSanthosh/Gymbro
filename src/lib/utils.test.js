@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateStreak, calculateVolume, parseReps, getActiveTemplates, getRestDays, getLevelProgress, workoutCompletedAt, lastPerformanceByName, plannedSetDrafts, formatSet, buildWeek, storedSessionStatus, untickSession, weekProgress } from './utils.js';
+import { calculateStreak, calculateVolume, parseReps, getActiveTemplates, getRestDays, getLevelProgress, workoutCompletedAt, lastPerformanceByName, plannedSetDrafts, formatSet, buildWeek, storedSessionStatus, untickSession, weekProgress, weekRearrangement } from './utils.js';
 
 // Fixed "today": Saturday 17 Oct 2026, noon local time
 beforeEach(() => mock.timers.enable({ apis: ['Date'], now: new Date(2026, 9, 17, 12) }));
@@ -196,4 +196,26 @@ test('this week: planned days trained out of planned days, unplanned training as
   // Five planned, all done
   const full = [day(false, false), day(true, true), day(true, true), day(true, true), day(true, true), day(true, true), day(false, false)];
   assert.deepEqual(weekProgress(full), { plannedDays: 5, plannedDone: 5, trainedDays: 5, extraDays: 0 });
+});
+
+test('weekRearrangement: only moved days are saved; a day left empty gets a blank plan', () => {
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const [push, pull, legs, upper, lower, rest1] = [1, 2, 3, 4, 5, 6].map(id => ({ id }));
+  // Push Pull Legs Upper Lower Rest (nothing) -> Push Pull Rest Legs Upper Lower (nothing)
+  const before = [push, pull, legs, upper, lower, rest1, null];
+  const after = [push, pull, rest1, legs, upper, lower, null];
+  const { moves, blankDays } = weekRearrangement(before, after, days);
+  assert.deepEqual(moves, [
+    { id: 6, day_of_week: 'Tuesday' },
+    { id: 3, day_of_week: 'Wednesday' },
+    { id: 4, day_of_week: 'Thursday' },
+    { id: 5, day_of_week: 'Friday' },
+  ]);
+  assert.deepEqual(blankDays, []);
+
+  // Moving Saturday's plan onto an empty Sunday leaves Saturday empty
+  const sat = { id: 7 };
+  const moved = weekRearrangement([null, pull, legs, upper, lower, rest1, sat], [sat, pull, legs, upper, lower, rest1, null], days);
+  assert.deepEqual(moved.moves, [{ id: 7, day_of_week: 'Sunday' }]);
+  assert.deepEqual(moved.blankDays, ['Saturday']);
 });

@@ -1400,6 +1400,17 @@ p.panel.chart-empty {
   text-align: right;
 }
 
+.grouped-list .rearrange-row {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-4);
+}
+
+.rearrange-row .list-row-main { width: 2.75rem; flex-shrink: 0; }
+.rearrange-row .week-overview-plan { flex: 1; text-align: left; }
+.rearrange-row .icon-button:disabled { opacity: 0.3; }
+
 .week-overview-plan.is-planned { color: var(--text-primary); }
 .week-overview-plan.is-none { color: var(--text-tertiary); }
 

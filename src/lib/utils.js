@@ -183,6 +183,18 @@ export function getActiveTemplates(workouts) {
   return byDay;
 }
 
+// Planner "Rearrange week": what to send to rearrange_week(). before/after are 7 plans, Sunday first
+// (null = no plan row). A day left without a plan gets a blank one, so an older plan there can't resurface.
+export function weekRearrangement(before, after, days) {
+  const moves = [], blankDays = [];
+  after.forEach((plan, i) => {
+    if (plan?.id === before[i]?.id) return;
+    if (plan) moves.push({ id: plan.id, day_of_week: days[i] });
+    else blankDays.push(days[i]);
+  });
+  return { moves, blankDays };
+}
+
 export function getRestDays(templatesByDay) {
   return new Set(Object.values(templatesByDay).filter(t => t.is_rest_day).map(t => t.day_of_week));
 }
