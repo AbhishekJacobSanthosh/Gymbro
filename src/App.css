@@ -621,6 +621,45 @@
   align-self: center;
 }
 
+/* "Also add to my plan" under the add form */
+.plan-choice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.plan-choice input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent);
+}
+
+.ex-card-menu {
+  margin: -10px -6px -10px 0;
+  color: var(--text-secondary);
+}
+
+/* Swap / remove sheet */
+.ex-action-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+
+.ex-action-group .form-label { margin-bottom: 0; }
+
+.ex-action-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+
+.ex-action-buttons .btn { padding-inline: var(--space-2); white-space: normal; }
+
 /* ---- Done / rest / nothing planned ---- */
 .today-state {
   display: flex;

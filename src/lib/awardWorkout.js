@@ -11,6 +11,7 @@ export async function submitWorkout(userId, op) {
     p_day_of_week: op.dayOfWeek,
     p_completed_at: op.completedAt,
     p_exercises: op.exercises,
+    p_removed_from_plan: op.removedFromPlan ?? [],
   });
   if (error) throw error;
 

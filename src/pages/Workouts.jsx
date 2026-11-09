@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, Coffee, Loader2, Trophy, Undo2, Plus, Minus, ChevronDown, X } from 'lucide-react';
+import { Check, Coffee, Loader2, Trophy, Undo2, Plus, Minus, ChevronDown, X, MoreHorizontal, Repeat, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../App';
 import { getActiveTemplates, workoutCompletedAt, lastPerformanceByName, plannedSetDrafts, formatSet, storedSessionStatus, untickSession } from '../lib/utils';
@@ -14,12 +14,15 @@ const startOfDay = (date) => { const d = new Date(date); d.setHours(0, 0, 0, 0);
 const isSameDay = (a, b) => startOfDay(a).getTime() === startOfDay(b).getTime();
 const nameKey = (name) => name?.trim().toLowerCase();
 
-const EMPTY_WORKOUT = { templateId: null, routineName: 'No Template', isRestDay: false, exercises: [], startedAt: null, lastActivityAt: null };
+// removedFromPlan: planned exercise ids removed with "From my plan too", deleted from the plan on finish
+const EMPTY_WORKOUT = { templateId: null, routineName: 'No Template', isRestDay: false, exercises: [], removedFromPlan: [], startedAt: null, lastActivityAt: null };
 
-// A planned exercise becomes a local one; ticks always start empty, boxes start from last time
+// A planned exercise becomes a local one; ticks always start empty, boxes start from last time.
+// plan_change, applied to the plan on finish: 'replace' takes template_exercise_id's place, 'add' joins the plan.
 const toLocalExercise = (ex, lastSets) => ({
   key: ex.id ? `t${ex.id}` : crypto.randomUUID(),
   template_exercise_id: ex.id ?? null,
+  plan_change: null,
   name: ex.name,
   sets: ex.sets,
   reps: ex.reps,
@@ -41,6 +44,7 @@ const planFromTemplate = (template, lastByName = {}) => template ? {
 } : EMPTY_WORKOUT;
 
 const loggedCount = (ex) => Object.keys(ex.logged_sets || {}).length;
+const topWeight = (sets = []) => Math.max(0, ...sets.map(set => parseFloat(set.weight) || 0));
 
 // A heavier logged set raises the planned weight (saved to the template on finish)
 const withTopWeight = (ex) => {
@@ -78,7 +82,12 @@ export default function Workouts({ session }) {
   const pendingFinishId = useRef(null);
   const serverDoneTodayRef = useRef(false);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [addToPlan, setAddToPlan] = useState(false);
   const [planChanged, setPlanChanged] = useState(null); // 'rest' | 'changed' | null
+
+  // Swap / remove sheet for one exercise
+  const [actionKey, setActionKey] = useState(null);
+  const [swapName, setSwapName] = useState('');
 
   // iOS-style large title: once it scrolls out of view, the slim bar shows instead
   const headerEndRef = useRef(null);
@@ -332,10 +341,42 @@ export default function Workouts({ session }) {
       weight: parseFloat(newExercise.weight) || 0,
       minutes: parseInt(newExercise.minutes) || 0,
     }, lastByName[nameKey(name)]);
+    added.plan_change = addToPlan && workout.templateId ? 'add' : null;
     updateWorkout(w => ({ ...w, exercises: [...w.exercises, added] }));
     setExpandedKey(added.key);
     setShowQuickAdd(false);
+    setAddToPlan(false);
     setNewExercise({ name: '', sets: '', reps: '', weight: '', minutes: '' });
+  };
+
+  // The new exercise keeps the old one's sets, reps and minutes; weights come from last time you did it.
+  // toPlan: it also takes the old one's place in the plan when you finish.
+  const swapExercise = (key, toPlan) => {
+    const name = swapName.trim();
+    const old = exercises.find(ex => ex.key === key);
+    if (!name || !old) return;
+    const lastSets = lastByName[nameKey(name)];
+    const swapped = toLocalExercise({ name, sets: old.sets, reps: old.reps, minutes: old.minutes, weight: topWeight(lastSets) }, lastSets);
+    updateExercise(key, ex => ({
+      ...swapped,
+      template_exercise_id: toPlan ? ex.template_exercise_id : null,
+      // An exercise added mid-workout keeps its own plan choice
+      plan_change: toPlan ? 'replace' : ex.template_exercise_id ? null : ex.plan_change,
+    }));
+    setExpandedKey(swapped.key);
+    setActionKey(null);
+  };
+
+  const removeExercise = (key, fromPlan) => {
+    updateWorkout(w => {
+      const planId = w.exercises.find(ex => ex.key === key)?.template_exercise_id;
+      return {
+        ...w,
+        exercises: w.exercises.filter(ex => ex.key !== key),
+        removedFromPlan: fromPlan && planId ? [...(w.removedFromPlan || []), planId] : (w.removedFromPlan || []),
+      };
+    });
+    setActionKey(null);
   };
 
   // The big circle: ticks the whole exercise, logging every remaining set with what is in its
@@ -426,8 +467,10 @@ export default function Workouts({ session }) {
       routineName,
       dayOfWeek: DAYS[startedAt.getDay()],
       completedAt: completedAt.toISOString(),
+      removedFromPlan: workout.removedFromPlan || [],
       exercises: exercises.map(ex => ({
         template_exercise_id: ex.template_exercise_id,
+        plan_change: ex.plan_change ?? null, // always sent: a missing key means an older app version (always adds)
         name: ex.name,
         sets: parseInt(ex.sets) || 0,
         reps: String(ex.reps ?? '') || '0',
@@ -463,6 +506,8 @@ export default function Workouts({ session }) {
     ? expandedKey
     : (exercises.find(ex => !ex.completed) ?? exercises[0])?.key;
   const showDock = hasWorkout && !isRestDay && exercises.length > 0 && !isTodayCompleted;
+  const actionEx = exercises.find(ex => ex.key === actionKey);
+  const actionInPlan = !!workout.templateId && !!actionEx?.template_exercise_id;
   const progressPct = totalSets ? (doneSets / totalSets) * 100 : 0;
 
   const title = loading ? 'Today' : isTodayCompleted ? 'Done for today' : isRestDay ? 'Rest day' : hasWorkout ? routineName : 'Today';
@@ -557,6 +602,10 @@ export default function Workouts({ session }) {
 
   return (
     <div className={`today ${showDock ? 'has-dock' : ''}`}>
+      {/* Name suggestions for adding and swapping exercises */}
+      <datalist id="exercise-suggestions">
+        {pastExercises.map(name => <option key={name} value={name} />)}
+      </datalist>
 
       {showConfetti && (
         <div className="celebrate" role="status">
@@ -698,6 +747,10 @@ export default function Workouts({ session }) {
                       {exerciseTick}
                       <h2 className="ex-card-name">{ex.name}</h2>
                       {sets > 0 && <span className="ex-row-count num">{loggedCount(ex)}/{sets}</span>}
+                      <button className="icon-button ex-card-menu" onClick={() => { setSwapName(''); setActionKey(ex.key); }}
+                        aria-label={`Swap or remove ${ex.name}`}>
+                        <MoreHorizontal size={20} />
+                      </button>
                     </div>
                     {sets > 0 ? renderSetTable(ex) : plan && <p className="ex-card-plan">{plan}</p>}
                   </article>
@@ -713,9 +766,6 @@ export default function Workouts({ session }) {
             </button>
           ) : (
           <form onSubmit={handleAddExercise} className="quick-add">
-            <datalist id="exercise-suggestions">
-              {pastExercises.map(name => <option key={name} value={name} />)}
-            </datalist>
             <div className="quick-add-head">
               <label htmlFor="quick-add-name" className="form-label">Add an exercise</label>
               {exercises.length > 0 && (
@@ -745,6 +795,12 @@ export default function Workouts({ session }) {
                 value={newExercise.minutes} onChange={e => setNewExercise({ ...newExercise, minutes: e.target.value })} />
               <button type="submit" className="btn btn-secondary" aria-label="Add exercise"><Plus size={18} /></button>
             </div>
+            {workout.templateId && (
+              <label className="plan-choice">
+                <input type="checkbox" checked={addToPlan} onChange={e => setAddToPlan(e.target.checked)} />
+                Also add to my {routineName} plan
+              </label>
+            )}
           </form>
           )}
 
@@ -783,6 +839,61 @@ export default function Workouts({ session }) {
                   {!allDone && <span className="today-finish-count num">{completedCount}/{exercises.length}</span>}
                 </>}
           </button>
+        </div>
+      )}
+
+      {/* Swap or remove one exercise. Plan changes only happen when the workout is finished. */}
+      {actionEx && (
+        <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setActionKey(null); }}>
+          <div className="modal-content" role="dialog" aria-modal="true" aria-labelledby="ex-action-title">
+            <div className="modal-drag-handle" />
+            <button onClick={() => setActionKey(null)} className="modal-close" aria-label="Close">
+              <X size={20} />
+            </button>
+            <h2 id="ex-action-title" className="modal-title">{actionEx.name}</h2>
+            <p className="modal-subtitle">
+              {actionInPlan ? `In your ${routineName} plan.` : 'Only in this workout.'}
+              {loggedCount(actionEx) > 0 && ` Swapping or removing it clears the ${loggedCount(actionEx)} set${loggedCount(actionEx) === 1 ? '' : 's'} you logged.`}
+            </p>
+
+            <form className="ex-action-group" onSubmit={(e) => { e.preventDefault(); swapExercise(actionEx.key, false); }}>
+              <label htmlFor="swap-name" className="form-label">Swap for</label>
+              <input
+                id="swap-name"
+                type="text"
+                list="exercise-suggestions"
+                placeholder="Exercise name"
+                value={swapName}
+                onChange={e => setSwapName(e.target.value)}
+              />
+              {actionInPlan ? (
+                <div className="ex-action-buttons">
+                  <button type="submit" className="btn btn-secondary btn-lg" disabled={!swapName.trim()}>Just today</button>
+                  <button type="button" className="btn btn-primary btn-lg" disabled={!swapName.trim()} onClick={() => swapExercise(actionEx.key, true)}>
+                    Update my plan
+                  </button>
+                </div>
+              ) : (
+                <button type="submit" className="btn btn-primary btn-lg" disabled={!swapName.trim()}>
+                  <Repeat size={18} /> Swap
+                </button>
+              )}
+            </form>
+
+            <div className="ex-action-group">
+              <span className="form-label">Remove</span>
+              {actionInPlan ? (
+                <div className="ex-action-buttons">
+                  <button className="btn btn-secondary btn-lg" onClick={() => removeExercise(actionEx.key, false)}>Just today</button>
+                  <button className="btn btn-lg btn-destructive" onClick={() => removeExercise(actionEx.key, true)}>From my plan too</button>
+                </div>
+              ) : (
+                <button className="btn btn-lg btn-destructive" onClick={() => removeExercise(actionEx.key, false)}>
+                  <Trash2 size={18} /> Remove
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
