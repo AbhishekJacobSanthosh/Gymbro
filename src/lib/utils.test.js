@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateStreak, calculateVolume, parseReps, getActiveTemplates, getRestDays, getLevelProgress, workoutCompletedAt, lastPerformanceByName, plannedSetDrafts, formatSet, buildWeek, storedSessionStatus, untickSession, weekProgress, weekRearrangement } from './utils.js';
+import { calculateStreak, calculateVolume, parseReps, getActiveTemplates, getRestDays, getLevelProgress, workoutCompletedAt, lastPerformanceByName, plannedSetDrafts, formatSet, buildWeek, storedSessionStatus, untickSession, weekProgress, weekRearrangement, isCardio, parseDuration, formatDuration, formatPace, cardioComparison, lastCardioByName, formatCardioTarget, activityFromName, distanceToKm } from './utils.js';
 
 // Fixed "today": Saturday 17 Oct 2026, noon local time
 beforeEach(() => mock.timers.enable({ apis: ['Date'], now: new Date(2026, 9, 17, 12) }));
@@ -218,4 +218,65 @@ test('weekRearrangement: only moved days are saved; a day left empty gets a blan
   const moved = weekRearrangement([null, pull, legs, upper, lower, rest1, sat], [sat, pull, legs, upper, lower, rest1, null], days);
   assert.deepEqual(moved.moves, [{ id: 7, day_of_week: 'Sunday' }]);
   assert.deepEqual(moved.blankDays, ['Saturday']);
+});
+
+test('isCardio: kind wins; older rows with no sets but minutes count as cardio', () => {
+  assert.equal(isCardio({ kind: 'cardio', sets: 3 }), true);
+  assert.equal(isCardio({ kind: 'lift', sets: 0, minutes: 20 }), false);
+  assert.equal(isCardio({ sets: 0, minutes: 20 }), true);
+  assert.equal(isCardio({ sets: 3, reps: '10', minutes: 0 }), false);
+});
+
+test('parseDuration: mm:ss, h:mm:ss, or plain minutes', () => {
+  assert.equal(parseDuration('25:10'), 1510);
+  assert.equal(parseDuration('1:02:03'), 3723);
+  assert.equal(parseDuration('30'), 1800);
+  assert.equal(parseDuration(''), null);
+  assert.equal(parseDuration('abc'), null);
+  assert.equal(formatDuration(1510), '25:10');
+  assert.equal(formatDuration(3723), '1:02:03');
+});
+
+test('formatPace: per activity', () => {
+  assert.equal(formatPace('run', 5, 1500), '5:00 /km');
+  assert.equal(formatPace('cycle', 20, 3600), '20.0 km/h');
+  assert.equal(formatPace('row', 2, 480), '2:00 /500 m');
+  assert.equal(formatPace('swim', 1, 1200), '2:00 /100 m');
+  assert.equal(formatPace('hiit', 1, 1200), null);
+  assert.equal(formatPace('run', 0, 1200), null);
+});
+
+test('cardioComparison: pace, speed, or time', () => {
+  // 4.0 km in 25:10 vs 4.0 km in 27:00 last time -> 27.5 s/km
+  assert.equal(cardioComparison('run', { distance_km: 4, duration_seconds: 1510 }, { distance_km: 4, duration_seconds: 1620 }), '27 s/km faster');
+  assert.equal(cardioComparison('cycle', { distance_km: 20, duration_seconds: 3600 }, { distance_km: 18, duration_seconds: 3600 }), '2.0 km/h faster');
+  assert.equal(cardioComparison('hiit', { duration_seconds: 1200 }, { duration_seconds: 900 }), '5 min longer');
+  assert.equal(cardioComparison('run', { duration_seconds: 1200 }, null), null);
+});
+
+test('lastCardioByName: newest cardio row per name; lifts are left to lastPerformanceByName', () => {
+  const rows = [
+    { name: 'Run', kind: 'cardio', distance_km: 5, duration_seconds: 1500 },
+    { name: 'run', kind: 'cardio', distance_km: 4, duration_seconds: 1400 },
+    { name: 'Rowing', sets: 0, minutes: 10 }, // older row, before kind existed
+    { name: 'Squat', sets: 3, reps: '5', weight: 100 },
+  ];
+  assert.deepEqual(lastCardioByName(rows), {
+    run: { distance_km: 5, duration_seconds: 1500 },
+    rowing: { distance_km: null, duration_seconds: 600 },
+  });
+  assert.deepEqual(Object.keys(lastPerformanceByName(rows)), ['squat']);
+});
+
+test('formatCardioTarget and activityFromName', () => {
+  assert.equal(formatCardioTarget({ activity: 'run', duration_seconds: 1800 }), '30 min');
+  assert.equal(formatCardioTarget({ activity: 'run', distance_km: 5 }), '5 km');
+  assert.equal(formatCardioTarget({ activity: 'row', distance_km: 2, duration_seconds: 480 }), '2000 m in 8 min');
+  assert.equal(formatCardioTarget({ activity: 'hiit', intervals: { work: 30, rest: 30, rounds: 8 } }), '8 × 30s on / 30s off');
+  assert.equal(formatCardioTarget({ sets: 0, minutes: 20 }), '20 min');
+  assert.equal(activityFromName('Treadmill run'), 'run');
+  assert.equal(activityFromName('Spin class'), 'cycle');
+  assert.equal(activityFromName('Bench press'), null);
+  assert.equal(distanceToKm('swim', '1500'), 1.5);
+  assert.equal(distanceToKm('run', '5'), 5);
 });

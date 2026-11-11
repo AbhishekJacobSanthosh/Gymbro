@@ -2,12 +2,21 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Trash2, Dumbbell, Coffee, Edit3, Save, Loader2, GripVertical, ArrowUpDown, ChevronUp, ChevronDown, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../App';
-import { weekRearrangement } from '../lib/utils';
+import { weekRearrangement, isCardio, ACTIVITIES, getActivity, activityFromName, distanceToKm, distanceForInput } from '../lib/utils';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const SHORT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 let hasLoadedOnce = false;
+
+const EMPTY_NEW_EXERCISE = { kind: 'lift', name: '', sets: '', reps: '', weight: '', minutes: '', activity: '', distance: '', rounds: '', work: '', rest: '' };
+
+// HIIT is planned as rounds of work/rest seconds; minutes are filled in too, for older app versions
+const intervalsFrom = ({ rounds, work, rest }) => {
+  const iv = { rounds: parseInt(rounds) || 0, work: parseInt(work) || 0, rest: parseInt(rest) || 0 };
+  return iv.rounds > 0 && iv.work > 0 ? iv : null;
+};
+const intervalMinutes = (iv) => iv ? Math.round(iv.rounds * (iv.work + iv.rest) / 60) : 0;
 
 export default function Templates({ session }) {
   const [activeDay, setActiveDay] = useState(DAYS[new Date().getDay()]);
@@ -29,7 +38,7 @@ export default function Templates({ session }) {
   const [dragOverIdx, setDragOverIdx] = useState(null);
   const [activeDragId, setActiveDragId] = useState(null);
 
-  const [newExercise, setNewExercise] = useState({ name: '', sets: '', reps: '', weight: '', minutes: '' });
+  const [newExercise, setNewExercise] = useState(EMPTY_NEW_EXERCISE);
   const [addingExercise, setAddingExercise] = useState(false);
 
   // Weekly Overview State
@@ -168,13 +177,30 @@ export default function Templates({ session }) {
 
     setAddingExercise(true);
 
-    const exerciseData = {
+    const minutes = parseInt(newExercise.minutes) || 0;
+    const activity = newExercise.activity || activityFromName(newExercise.name);
+    const intervals = activity === 'hiit' ? intervalsFrom(newExercise) : null;
+    const exerciseData = newExercise.kind === 'cardio' ? {
       workout_id: templateId,
       name: newExercise.name,
+      kind: 'cardio',
+      activity,
+      sets: 0,
+      reps: '0',
+      weight: 0,
+      minutes: intervals ? intervalMinutes(intervals) : minutes,
+      duration_seconds: intervals ? null : minutes * 60 || null,
+      distance_km: !intervals && getActivity(activity)?.distance ? distanceToKm(activity, newExercise.distance) : null,
+      intervals,
+      completed: false,
+    } : {
+      workout_id: templateId,
+      name: newExercise.name,
+      kind: 'lift',
       sets: parseInt(newExercise.sets) || 0,
       reps: newExercise.reps || '0',
       weight: parseFloat(newExercise.weight) || 0,
-      minutes: parseInt(newExercise.minutes) || 0,
+      minutes: 0,
       completed: false
     };
 
@@ -186,7 +212,7 @@ export default function Templates({ session }) {
 
     if (!error && inserted) {
       setExercises([...exercises, inserted]);
-      setNewExercise({ name: '', sets: '', reps: '', weight: '', minutes: '' });
+      setNewExercise({ ...EMPTY_NEW_EXERCISE, kind: newExercise.kind });
       fetchWeeklyOverview();
     }
 
@@ -205,6 +231,28 @@ export default function Templates({ session }) {
 
     await supabase.from('exercises').update({ [field]: finalValue }).eq('id', id);
   };
+
+  // Cardio targets: each edit saves every field it affects, and the row shows the saved values
+  const saveCardio = async (ex, changes) => {
+    setExercises(prev => prev.map(e => e.id === ex.id ? { ...e, ...changes, distance_input: undefined } : e));
+    const { error } = await supabase.from('exercises').update(changes).eq('id', ex.id);
+    if (error) toast?.error(`Couldn't save ${ex.name}. Check your connection.`);
+  };
+  const saveCardioMinutes = (ex, value) => {
+    const minutes = parseInt(value) || 0;
+    saveCardio(ex, { minutes, duration_seconds: minutes * 60 || null });
+  };
+  const saveCardioDistance = (ex, value) => saveCardio(ex, { distance_km: distanceToKm(ex.activity, value) });
+  const saveIntervals = (ex) => {
+    const intervals = intervalsFrom(ex.intervals || {});
+    saveCardio(ex, { intervals, minutes: intervalMinutes(intervals), duration_seconds: null });
+  };
+  const changeActivity = (ex, activity) => saveCardio(ex, {
+    activity: activity || null,
+    // Distance only stays for activities that have one, intervals only for HIIT
+    ...(!getActivity(activity)?.distance && { distance_km: null }),
+    ...(activity !== 'hiit' && { intervals: null }),
+  });
 
   // Removed from the list right away, deleted for real only if Undo isn't tapped within 5s
   const removeExercise = (id) => {
@@ -457,6 +505,52 @@ export default function Templates({ session }) {
                         <Trash2 size={18} />
                       </button>
                     </div>
+                    {isCardio(ex) ? (() => {
+                      const activity = getActivity(ex.activity);
+                      const iv = ex.intervals || {};
+                      const setIntervalPart = (part, value) => handleLocalChange(ex.id, 'intervals', { ...iv, [part]: value });
+                      return (
+                        <div className="plan-fields">
+                          <label className="plan-field">
+                            <span>Activity</span>
+                            <select value={ex.activity || ''} onChange={e => changeActivity(ex, e.target.value)}>
+                              <option value="">Other</option>
+                              {ACTIVITIES.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
+                            </select>
+                          </label>
+                          {ex.activity === 'hiit' ? (
+                            <>
+                              {[['rounds', 'Rounds'], ['work', 'On (s)'], ['rest', 'Off (s)']].map(([part, label]) => (
+                                <label key={part} className="plan-field">
+                                  <span>{label}</span>
+                                  <input type="number" inputMode="numeric" min="0" className="num" value={iv[part] ?? ''}
+                                    onChange={e => setIntervalPart(part, e.target.value)}
+                                    onBlur={() => saveIntervals(ex)} />
+                                </label>
+                              ))}
+                            </>
+                          ) : (
+                            <>
+                              <label className="plan-field">
+                                <span>Min</span>
+                                <input type="number" inputMode="numeric" min="0" className="num" value={ex.minutes || ''}
+                                  onChange={e => handleLocalChange(ex.id, 'minutes', e.target.value)}
+                                  onBlur={e => saveCardioMinutes(ex, e.target.value)} />
+                              </label>
+                              {activity?.distance && (
+                                <label className="plan-field">
+                                  <span>{activity.unit}</span>
+                                  <input type="number" inputMode="decimal" step="any" min="0" className="num"
+                                    value={ex.distance_input ?? distanceForInput(ex.activity, parseFloat(ex.distance_km))}
+                                    onChange={e => handleLocalChange(ex.id, 'distance_input', e.target.value)}
+                                    onBlur={e => saveCardioDistance(ex, e.target.value)} />
+                                </label>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      );
+                    })() : (
                     <div className="plan-fields">
                       <label className="plan-field">
                         <span>Sets</span>
@@ -483,6 +577,7 @@ export default function Templates({ session }) {
                           onBlur={e => handleBlurSave(ex.id, 'minutes', e.target.value)} />
                       </label>
                     </div>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -494,28 +589,67 @@ export default function Templates({ session }) {
                 {pastExercises.map(name => <option key={name} value={name} />)}
               </datalist>
               <label htmlFor="plan-add-name" className="form-label">Add an exercise</label>
+              <div className="kind-toggle" role="group" aria-label="Exercise type">
+                {['lift', 'cardio'].map(kind => (
+                  <button key={kind} type="button" aria-pressed={newExercise.kind === kind}
+                    onClick={() => setNewExercise({ ...newExercise, kind })}>
+                    {kind === 'lift' ? 'Lift' : 'Cardio'}
+                  </button>
+                ))}
+              </div>
               <input
                 id="plan-add-name"
                 type="text"
                 list="exercise-suggestions"
-                placeholder="Exercise name"
+                placeholder={newExercise.kind === 'cardio' ? 'e.g. Easy run' : 'Exercise name'}
                 value={newExercise.name}
                 onChange={e => setNewExercise({ ...newExercise, name: e.target.value })}
                 required
               />
-              <div className="quick-add-row">
-                <input type="number" inputMode="numeric" min="0" placeholder="Sets" aria-label="Sets"
-                  value={newExercise.sets} onChange={e => setNewExercise({ ...newExercise, sets: e.target.value })} />
-                <input type="text" placeholder="Reps" aria-label="Reps"
-                  value={newExercise.reps} onChange={e => setNewExercise({ ...newExercise, reps: e.target.value })} />
-                <input type="number" inputMode="decimal" step="0.5" placeholder="kg" aria-label="Weight in kg"
-                  value={newExercise.weight} onChange={e => setNewExercise({ ...newExercise, weight: e.target.value })} />
-                <input type="number" inputMode="numeric" placeholder="Min" aria-label="Minutes"
-                  value={newExercise.minutes} onChange={e => setNewExercise({ ...newExercise, minutes: e.target.value })} />
-                <button type="submit" className="btn btn-primary" disabled={addingExercise} aria-label="Add exercise">
-                  {addingExercise ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
-                </button>
-              </div>
+              {newExercise.kind === 'cardio' ? (() => {
+                const activityId = newExercise.activity || activityFromName(newExercise.name) || '';
+                const activity = getActivity(activityId);
+                const field = (key, placeholder, label, inputMode = 'numeric') => (
+                  <input type="number" inputMode={inputMode} step="any" min="0" placeholder={placeholder} aria-label={label}
+                    value={newExercise[key]} onChange={e => setNewExercise({ ...newExercise, [key]: e.target.value })} />
+                );
+                return (
+                  <div className="quick-add-row">
+                    <select aria-label="Activity" value={activityId}
+                      onChange={e => setNewExercise({ ...newExercise, activity: e.target.value })}>
+                      <option value="">Activity</option>
+                      {ACTIVITIES.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
+                    </select>
+                    {activityId === 'hiit' ? (
+                      <>
+                        {field('rounds', 'Rounds', 'Rounds')}
+                        {field('work', 'On s', 'Seconds on')}
+                        {field('rest', 'Off s', 'Seconds off')}
+                      </>
+                    ) : (
+                      <>
+                        {field('minutes', 'Min', 'Target minutes')}
+                        {activity?.distance && field('distance', activity.unit, `Target distance in ${activity.unit}`, 'decimal')}
+                      </>
+                    )}
+                    <button type="submit" className="btn btn-primary" disabled={addingExercise} aria-label="Add exercise">
+                      {addingExercise ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
+                    </button>
+                  </div>
+                );
+              })() : (
+                <div className="quick-add-row">
+                  <input type="number" inputMode="numeric" min="0" placeholder="Sets" aria-label="Sets"
+                    value={newExercise.sets} onChange={e => setNewExercise({ ...newExercise, sets: e.target.value })} />
+                  <input type="text" placeholder="Reps" aria-label="Reps"
+                    value={newExercise.reps} onChange={e => setNewExercise({ ...newExercise, reps: e.target.value })} />
+                  <input type="number" inputMode="decimal" step="0.5" placeholder="kg" aria-label="Weight in kg"
+                    value={newExercise.weight} onChange={e => setNewExercise({ ...newExercise, weight: e.target.value })} />
+                  <button type="submit" className="btn btn-primary" disabled={addingExercise} aria-label="Add exercise">
+                    {addingExercise ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
+                  </button>
+                </div>
+              )}
             </form>
           </>
         )}

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, Flame, Loader2, X, Check } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../App';
-import { calculateStreak, getActiveTemplates, getRestDays } from '../lib/utils';
+import { calculateStreak, getActiveTemplates, getRestDays, isCardio, getActivity, formatDistance, formatDuration, formatPace, formatCardioTarget, EFFORTS } from '../lib/utils';
 import { submitWorkout } from '../lib/awardWorkout';
 
 let hasLoadedOnce = false;
@@ -245,14 +245,23 @@ export default function Calendar({ session }) {
         dayOfWeek: activeTemplate.day_of_week,
         completedAt: localDate.toISOString(),
         retro: true,
+        // Cardio is logged as planned: its targets become what was done
         exercises: dayExercises.map(ex => ({
           template_exercise_id: ex.id,
+          plan_change: null,
           name: ex.name,
+          kind: isCardio(ex) ? 'cardio' : 'lift',
           sets: parseInt(ex.sets) || 0,
           reps: ex.reps || '0',
           weight: parseFloat(ex.weight) || 0,
           minutes: parseInt(ex.minutes) || 0,
-          logged_sets: null
+          logged_sets: null,
+          ...(isCardio(ex) && {
+            activity: ex.activity ?? null,
+            duration_seconds: ex.duration_seconds ?? ((parseInt(ex.minutes) || 0) * 60 || null),
+            distance_km: ex.distance_km ?? null,
+            intervals: ex.intervals ?? null,
+          }),
         }))
       });
       earnedAchievements.forEach(ach => {
@@ -277,11 +286,23 @@ export default function Calendar({ session }) {
   const monthLabel = `${currentDate.toLocaleString('default', { month: 'long' })} ${currentDate.getFullYear()}`;
   const getInitial = (name) => name ? name.charAt(0).toUpperCase() : '?';
   const formatLoggedSet = (set) => (parseFloat(set.weight) || 0) > 0 ? `${set.weight} kg × ${set.reps}` : `${set.reps} reps`;
-  const planSummary = (ex) => [
-    ex.sets > 0 && ex.reps && ex.reps !== '0' ? `${ex.sets} × ${ex.reps}` : null,
-    ex.weight > 0 ? `${ex.weight} kg` : null,
-    ex.minutes > 0 ? `${ex.minutes} min` : null,
-  ].filter(Boolean).join(', ');
+  const planSummary = (ex) => {
+    if (isCardio(ex)) {
+      const seconds = ex.duration_seconds ?? (parseInt(ex.minutes) || 0) * 60;
+      return [
+        getActivity(ex.activity)?.label,
+        formatDistance(ex.activity, parseFloat(ex.distance_km)),
+        seconds > 0 ? formatDuration(seconds) : null,
+        formatPace(ex.activity, ex.distance_km, seconds),
+        EFFORTS[ex.effort - 1],
+      ].filter(Boolean).join(', ');
+    }
+    return [
+      ex.sets > 0 && ex.reps && ex.reps !== '0' ? `${ex.sets} × ${ex.reps}` : null,
+      ex.weight > 0 ? `${ex.weight} kg` : null,
+      ex.minutes > 0 ? `${ex.minutes} min` : null,
+    ].filter(Boolean).join(', ');
+  };
 
   return (
     <div className="consistency">
@@ -446,6 +467,11 @@ export default function Calendar({ session }) {
 
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <h3 className={`exercise-name ${ex.completed ? 'completed' : ''}`}>{ex.name}</h3>
+                      {isCardio(ex) ? (
+                        <div className="exercise-meta">
+                          <span>{formatCardioTarget(ex) || getActivity(ex.activity)?.label || 'Cardio'}</span>
+                        </div>
+                      ) : (
                       <div className="exercise-meta">
                         <span>{ex.sets} sets</span>
                         <label className="flex items-center gap-1">
@@ -471,6 +497,7 @@ export default function Calendar({ session }) {
                           <span>kg</span>
                         </label>
                       </div>
+                      )}
                     </div>
                   </div>
                 ))}

@@ -78,6 +78,17 @@ CREATE TABLE exercises (
   minutes INTEGER DEFAULT 0,
   completed BOOLEAN DEFAULT FALSE,
   logged_sets JSONB DEFAULT '[]'::jsonb,
+  -- Cardio: plan rows use duration_seconds / distance_km / intervals as targets, logged rows as what was done.
+  -- `minutes` is still filled (rounded) so older app versions show it.
+  kind TEXT,                 -- 'lift' | 'cardio'; NULL on older rows (no sets + minutes = cardio)
+  activity TEXT,             -- run, walk, cycle, row, swim, elliptical, stairs, jump_rope, hiit
+  distance_km NUMERIC,
+  duration_seconds INTEGER,
+  effort SMALLINT,           -- 1 Easy, 2 Moderate, 3 Hard, 4 All-out
+  calories NUMERIC,
+  avg_hr NUMERIC,
+  incline NUMERIC,
+  intervals JSONB,           -- {work, rest, rounds}, seconds
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -165,7 +176,7 @@ CREATE POLICY "Users insert own achievements" ON achievements FOR INSERT WITH CH
 -- ==========================================
 -- 8. SERVER-SIDE XP
 -- The browser can no longer write xp/level or xp_awarded; XP is computed here from the saved exercises.
--- Volume rule must match calculateVolume() in src/lib/utils.js.
+-- XP = 50 + kg·reps/100 (must match calculateVolume() in src/lib/utils.js) + cardio minutes × effort, max 180 min each.
 -- ==========================================
 REVOKE INSERT, UPDATE ON profiles FROM anon, authenticated;
 GRANT INSERT (id, display_name, color, updated_at) ON profiles TO authenticated;
@@ -184,6 +195,11 @@ RETURNS INTEGER LANGUAGE sql STABLE SET search_path = public AS $$
        FROM jsonb_each(e.logged_sets) s)
     ELSE COALESCE(e.sets, 0) * COALESCE(substring(e.reps from '\d+')::numeric, 0) * COALESCE(e.weight, 0)
     END), 0) / 100)::int
+  + floor(COALESCE(SUM(
+    CASE WHEN COALESCE(e.kind = 'cardio', COALESCE(e.sets, 0) = 0 AND COALESCE(e.minutes, 0) > 0) THEN
+      LEAST(GREATEST(COALESCE(e.duration_seconds / 60.0, e.minutes, 0), 0), 180)
+      * CASE e.effort WHEN 1 THEN 0.75 WHEN 3 THEN 1.25 WHEN 4 THEN 1.5 ELSE 1 END
+    END), 0))::int
   FROM exercises e WHERE e.workout_id = p_workout_id;
 $$;
 
@@ -245,10 +261,14 @@ BEGIN
   VALUES (auth.uid(), p_day_of_week, COALESCE(NULLIF(p_routine_name, ''), 'Workout'), TRUE, p_completed_at, p_client_id)
   RETURNING id INTO v_id;
 
-  INSERT INTO exercises (workout_id, name, sets, reps, weight, minutes, logged_sets, completed)
+  INSERT INTO exercises (workout_id, name, sets, reps, weight, minutes, logged_sets, completed,
+                         kind, activity, distance_km, duration_seconds, effort, calories, avg_hr, incline, intervals)
   SELECT v_id, x->>'name', COALESCE((x->>'sets')::int, 0), COALESCE(x->>'reps', '0'),
          COALESCE((x->>'weight')::numeric, 0), COALESCE((x->>'minutes')::int, 0),
-         NULLIF(x->'logged_sets', 'null'::jsonb), TRUE
+         NULLIF(x->'logged_sets', 'null'::jsonb), TRUE,
+         x->>'kind', x->>'activity', (x->>'distance_km')::numeric, (x->>'duration_seconds')::int,
+         (x->>'effort')::smallint, (x->>'calories')::numeric, (x->>'avg_hr')::numeric, (x->>'incline')::numeric,
+         NULLIF(x->'intervals', 'null'::jsonb)
   FROM jsonb_array_elements(p_exercises) x;
 
   IF EXISTS (SELECT 1 FROM workouts WHERE id = p_template_id AND user_id = auth.uid() AND NOT completed) THEN
@@ -257,16 +277,24 @@ BEGIN
     SET reps = COALESCE(x->>'reps', t.reps), weight = COALESCE((x->>'weight')::numeric, t.weight),
         name = CASE WHEN x->>'plan_change' = 'replace' THEN COALESCE(NULLIF(x->>'name', ''), t.name) ELSE t.name END,
         sets = CASE WHEN x->>'plan_change' = 'replace' THEN COALESCE((x->>'sets')::int, t.sets) ELSE t.sets END,
-        minutes = CASE WHEN x->>'plan_change' = 'replace' THEN COALESCE((x->>'minutes')::int, t.minutes) ELSE t.minutes END,
+        minutes = CASE WHEN x->>'plan_change' = 'replace'
+                  THEN COALESCE((x->'target'->>'minutes')::int, (x->>'minutes')::int, t.minutes) ELSE t.minutes END,
+        kind = CASE WHEN x->>'plan_change' = 'replace' THEN x->>'kind' ELSE t.kind END,
+        activity = CASE WHEN x->>'plan_change' = 'replace' THEN x->>'activity' ELSE t.activity END,
+        duration_seconds = CASE WHEN x->>'plan_change' = 'replace' THEN (x->'target'->>'duration_seconds')::int ELSE t.duration_seconds END,
+        distance_km = CASE WHEN x->>'plan_change' = 'replace' THEN (x->'target'->>'distance_km')::numeric ELSE t.distance_km END,
+        intervals = CASE WHEN x->>'plan_change' = 'replace' THEN NULLIF(x->'target'->'intervals', 'null'::jsonb) ELSE t.intervals END,
         completed = FALSE, logged_sets = NULL
     FROM jsonb_array_elements(p_exercises) x
     WHERE t.workout_id = p_template_id AND t.id = (x->>'template_exercise_id')::bigint;
 
     -- Exercises added mid-workout join the plan only when asked ('add'). Workouts queued by older app
     -- versions have no plan_change and keep the old always-add. Names already planned are skipped (Undo, then finish again).
-    INSERT INTO exercises (workout_id, name, sets, reps, weight, minutes)
+    INSERT INTO exercises (workout_id, name, sets, reps, weight, minutes, kind, activity, duration_seconds, distance_km, intervals)
     SELECT p_template_id, x->>'name', COALESCE((x->>'sets')::int, 0), COALESCE(x->>'reps', '0'),
-           COALESCE((x->>'weight')::numeric, 0), COALESCE((x->>'minutes')::int, 0)
+           COALESCE((x->>'weight')::numeric, 0), COALESCE((x->'target'->>'minutes')::int, (x->>'minutes')::int, 0),
+           x->>'kind', x->>'activity', (x->'target'->>'duration_seconds')::int, (x->'target'->>'distance_km')::numeric,
+           NULLIF(x->'target'->'intervals', 'null'::jsonb)
     FROM jsonb_array_elements(p_exercises) x
     WHERE x->>'template_exercise_id' IS NULL
       AND (x->>'plan_change' = 'add' OR NOT x ? 'plan_change')

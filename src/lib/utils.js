@@ -55,6 +55,137 @@ export function calculateVolume(exercises) {
   return total;
 }
 
+// ---- Cardio ----
+// pace: how speed is shown. per: metres for "time per distance" (min/km, /500 m, /100 m); 'kmh' for speed.
+// unit: what distance is typed in (stored as km either way). level: label for incline/level under "More".
+export const ACTIVITIES = [
+  { id: 'run', label: 'Run', distance: true, unit: 'km', pace: 1000, level: 'Incline %' },
+  { id: 'walk', label: 'Walk', distance: true, unit: 'km', pace: 1000, level: 'Incline %' },
+  { id: 'cycle', label: 'Cycle', distance: true, unit: 'km', pace: 'kmh', level: 'Level' },
+  { id: 'row', label: 'Row', distance: true, unit: 'm', pace: 500, level: 'Level' },
+  { id: 'swim', label: 'Swim', distance: true, unit: 'm', pace: 100 },
+  { id: 'elliptical', label: 'Elliptical', distance: false, level: 'Level' },
+  { id: 'stairs', label: 'Stairs', distance: false, level: 'Level' },
+  { id: 'jump_rope', label: 'Jump rope', distance: false },
+  { id: 'hiit', label: 'HIIT', distance: false },
+];
+export const EFFORTS = ['Easy', 'Moderate', 'Hard', 'All-out']; // stored as 1-4
+
+export const getActivity = (id) => ACTIVITIES.find(a => a.id === id) ?? null;
+
+// "Morning run" -> run. Used when a cardio exercise is added or swapped by name only.
+export function activityFromName(name) {
+  const n = String(name ?? '').toLowerCase();
+  const words = { run: 'run', jog: 'run', treadmill: 'run', walk: 'walk', hike: 'walk', cycl: 'cycle', bike: 'cycle',
+    spin: 'cycle', row: 'row', erg: 'row', swim: 'swim', elliptical: 'elliptical', cross: 'elliptical',
+    stair: 'stairs', step: 'stairs', rope: 'jump_rope', skip: 'jump_rope', hiit: 'hiit', interval: 'hiit', tabata: 'hiit' };
+  return Object.entries(words).find(([word]) => n.includes(word))?.[1] ?? null;
+}
+
+// Rows saved before cardio had a kind: no sets but some minutes
+export const isCardio = (ex) => ex?.kind ? ex.kind === 'cardio' : !(parseInt(ex?.sets) > 0) && parseInt(ex?.minutes) > 0;
+
+// "25:10", "1:02:03", or a plain number of minutes ("30") -> seconds. Empty or invalid -> null.
+export function parseDuration(text) {
+  const s = String(text ?? '').trim();
+  if (!s) return null;
+  if (/^\d+(\.\d+)?$/.test(s)) return Math.round(parseFloat(s) * 60);
+  if (!/^\d+(:\d{1,2}){1,2}$/.test(s)) return null;
+  return s.split(':').reduce((total, part) => total * 60 + parseInt(part), 0);
+}
+
+export function formatDuration(totalSeconds) {
+  const s = Math.max(0, Math.round(totalSeconds || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = String(s % 60).padStart(2, '0');
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+}
+
+// "5:02 /km", "24.3 km/h", "1:58 /500 m". Null without both distance and time.
+export function formatPace(activityId, distanceKm, seconds) {
+  const activity = getActivity(activityId);
+  const km = parseFloat(distanceKm) || 0;
+  if (!activity?.pace || km <= 0 || !(seconds > 0)) return null;
+  if (activity.pace === 'kmh') return `${(km / (seconds / 3600)).toFixed(1)} km/h`;
+  const per = activity.pace === 1000 ? 'km' : `${activity.pace} m`;
+  return `${formatDuration(seconds / (km * 1000 / activity.pace))} /${per}`;
+}
+
+// Typed distance in the activity's unit <-> stored km
+export const distanceToKm = (activityId, value) => {
+  const n = parseFloat(value);
+  if (!(n > 0)) return null;
+  return getActivity(activityId)?.unit === 'm' ? n / 1000 : n;
+};
+export const distanceForInput = (activityId, km) => {
+  if (!(km > 0)) return '';
+  return getActivity(activityId)?.unit === 'm' ? String(Math.round(km * 1000)) : String(+km.toFixed(2));
+};
+export const formatDistance = (activityId, km) => {
+  if (!(km > 0)) return null;
+  return getActivity(activityId)?.unit === 'm' ? `${Math.round(km * 1000)} m` : `${+km.toFixed(2)} km`;
+};
+
+// A plan target: "30 min", "5 km", "8 × 30s on / 30s off"
+export function formatCardioTarget(ex) {
+  const iv = ex?.intervals;
+  if (iv?.rounds > 0 && iv?.work > 0) return `${iv.rounds} × ${iv.work}s on${iv.rest > 0 ? ` / ${iv.rest}s off` : ''}`;
+  const parts = [
+    formatDistance(ex?.activity, parseFloat(ex?.distance_km)),
+    ex?.duration_seconds > 0 ? (ex.duration_seconds % 60 ? formatDuration(ex.duration_seconds) : `${ex.duration_seconds / 60} min`)
+      : parseInt(ex?.minutes) > 0 ? `${parseInt(ex.minutes)} min` : null,
+  ].filter(Boolean);
+  return parts.join(' in ');
+}
+
+// Planned seconds for a cardio exercise: the time target, or all the interval rounds
+export function cardioTargetSeconds(ex) {
+  const iv = ex?.intervals;
+  if (iv?.rounds > 0) return iv.rounds * ((iv.work || 0) + (iv.rest || 0));
+  if (ex?.duration_seconds > 0) return ex.duration_seconds;
+  return (parseInt(ex?.minutes) || 0) * 60;
+}
+
+// Last time vs now: "27 s/km faster", "1.2 km/h faster", "3 min longer". Null when there's nothing to compare.
+export function cardioComparison(activityId, now, last) {
+  if (!last) return null;
+  const activity = getActivity(activityId);
+  const nowKm = parseFloat(now.distance_km) || 0, lastKm = parseFloat(last.distance_km) || 0;
+  if (activity?.pace && nowKm > 0 && lastKm > 0 && now.duration_seconds > 0 && last.duration_seconds > 0) {
+    if (activity.pace === 'kmh') {
+      const diff = nowKm / (now.duration_seconds / 3600) - lastKm / (last.duration_seconds / 3600);
+      if (Math.abs(diff) < 0.05) return 'Same speed as last time';
+      return `${Math.abs(diff).toFixed(1)} km/h ${diff > 0 ? 'faster' : 'slower'}`;
+    }
+    const units = (km) => km * 1000 / activity.pace;
+    const diff = Math.round(now.duration_seconds / units(nowKm) - last.duration_seconds / units(lastKm));
+    if (diff === 0) return 'Same pace as last time';
+    const per = activity.pace === 1000 ? 'km' : `${activity.pace} m`;
+    return `${Math.abs(diff)} s/${per} ${diff < 0 ? 'faster' : 'slower'}`;
+  }
+  if (now.duration_seconds > 0 && last.duration_seconds > 0) {
+    const diff = Math.round((now.duration_seconds - last.duration_seconds) / 60);
+    if (diff === 0) return 'Same time as last time';
+    return `${Math.abs(diff)} min ${diff > 0 ? 'longer' : 'shorter'}`;
+  }
+  return null;
+}
+
+// Last finished cardio session per exercise name: { distance_km, duration_seconds }. `rows` newest first.
+export function lastCardioByName(rows) {
+  const byName = {};
+  for (const row of rows || []) {
+    const name = row.name?.trim().toLowerCase();
+    if (!name || byName[name] || !isCardio(row)) continue;
+    byName[name] = {
+      distance_km: parseFloat(row.distance_km) || null,
+      duration_seconds: row.duration_seconds ?? ((parseInt(row.minutes) || 0) * 60 || null),
+    };
+  }
+  return byName;
+}
+
 // When a finished workout is dated: the day it was started, even if Finish is pressed after midnight.
 // Past that day it uses the last time something was logged, capped at 23:59:59.999 of the start day.
 export function workoutCompletedAt(startedAt, lastActivityAt, now = new Date()) {
@@ -71,7 +202,7 @@ export function lastPerformanceByName(rows) {
   const byName = {};
   for (const row of rows || []) {
     const name = row.name?.trim().toLowerCase();
-    if (!name || byName[name]) continue;
+    if (!name || byName[name] || isCardio(row)) continue;
     const logged = Object.entries(row.logged_sets || {})
       .sort(([a], [b]) => Number(a) - Number(b))
       .map(([, set]) => ({ reps: set.reps, weight: set.weight }));
@@ -117,7 +248,7 @@ export function untickSession(session, now = new Date()) {
 }
 
 // Whether a workout saved on the phone still applies when the Today page opens.
-// - Anything logged: always kept (never lose sets); planChanged flags a plan edited since it was started today.
+// - Anything logged (sets, cardio time or a stopwatch): always kept (never lose sets); planChanged flags a plan edited since it was started today.
 // - Nothing logged, from a plan: kept only if today's plan is still that same training day, so Planner
 //   changes (rest day, a different plan) show up.
 // - Nothing logged, spontaneous: kept for the day it was started.
@@ -125,7 +256,8 @@ export function untickSession(session, now = new Date()) {
 export function storedSessionStatus(stored, todaysTemplate, now = new Date(), planKnown = true) {
   if (!stored) return { keep: false, planChanged: false };
   if (!planKnown) return { keep: true, planChanged: false };
-  const progress = stored.exercises.some(ex => ex.completed || Object.keys(ex.logged_sets || {}).length > 0);
+  const progress = stored.exercises.some(ex => ex.completed || Object.keys(ex.logged_sets || {}).length > 0
+    || ex.duration_seconds > 0 || !!ex.running_since);
   const startedToday = new Date(stored.startedAt).toDateString() === now.toDateString();
   const planStillMatches = !!todaysTemplate && !todaysTemplate.is_rest_day && todaysTemplate.id === stored.templateId;
 

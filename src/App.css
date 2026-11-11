@@ -601,10 +601,15 @@
   border-top: 1px solid var(--divider);
 }
 
+/* Fields share the width, so lift (3 fields) and cardio (2-4) rows both fill it */
 .quick-add-row {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr)) 48px;
+  display: flex;
   gap: var(--space-2);
+}
+
+.quick-add-row > * {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .quick-add-row input {
@@ -613,8 +618,164 @@
 }
 
 .quick-add-row .btn {
+  flex: 0 0 48px;
   padding: 0;
   min-height: 44px;
+}
+
+.quick-add-row select {
+  flex-grow: 1.5;
+  padding-inline: 0.5rem;
+}
+
+/* Lift / Cardio switch on the add forms */
+.kind-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+}
+
+.kind-toggle button {
+  min-height: 36px;
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+  font-weight: var(--font-semibold);
+  font-size: 0.9375rem;
+}
+
+.kind-toggle button[aria-pressed="true"] {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+}
+
+/* ---- Cardio card: time, distance + pace, effort ---- */
+.cardio {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: 0 var(--space-1) var(--space-2);
+}
+
+.cardio-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.cardio-activity {
+  width: auto;
+  min-height: 36px;
+  padding: 0.375rem 0.625rem;
+  font-weight: var(--font-semibold);
+}
+
+.cardio-target {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+.cardio-clock {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+}
+
+.cardio-time {
+  height: 56px;
+  font-size: 2rem;
+  font-weight: var(--font-semibold);
+  text-align: center;
+  background: var(--bg-hover);
+}
+
+.cardio-time.is-running {
+  color: var(--accent);
+}
+
+.btn.cardio-start {
+  min-width: 112px;
+  min-height: 56px;
+}
+
+.text-button.cardio-reset {
+  align-self: flex-start;
+  min-height: 32px;
+  margin-top: calc(var(--space-2) * -1);
+  padding-inline: 0;
+}
+
+.cardio-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: var(--space-2);
+}
+
+.cardio .plan-field input {
+  background: var(--bg-hover);
+}
+
+.cardio-pace strong {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  font-size: 1.125rem;
+  font-weight: var(--font-semibold);
+}
+
+.cardio-last {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.cardio-last strong {
+  color: var(--text-primary);
+  font-weight: var(--font-semibold);
+}
+
+.effort {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.effort-btn {
+  min-height: 40px;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-weight: var(--font-semibold);
+  font-size: 0.875rem;
+}
+
+.effort-btn[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.cardio-more summary {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  color: var(--text-secondary);
+  font-weight: var(--font-semibold);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.cardio-more[open] summary {
+  margin-bottom: var(--space-2);
+}
+
+.ex-row-plan.is-running {
+  color: var(--accent);
+}
+
+.plan-field select {
+  padding: 0.5rem 0.375rem;
+  background: var(--bg-elevated);
 }
 
 .today-cancel {
