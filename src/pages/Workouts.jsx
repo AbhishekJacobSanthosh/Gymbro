@@ -194,9 +194,13 @@ export default function Workouts({ session }) {
     navigator.vibrate?.([200, 100, 200]); // Android only; iPhone web apps can't vibrate
     saveRest(null);
     setRestOver(true);
+  }, [restFinished]);
+  // Its own effect: clearing the rest above re-runs the one before, which would cancel this timer
+  useEffect(() => {
+    if (!restOver) return;
     const timeout = setTimeout(() => setRestOver(false), 4000);
     return () => clearTimeout(timeout);
-  }, [restFinished]);
+  }, [restOver]);
 
   const saveIntervalRun = (next) => {
     setIntervalRun(next);
