@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { supabase } from '../lib/supabase';
 import { Check, ChevronRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useToast } from '../App';
-import { getGreeting, getRelativeTime, calculateStreak, calculateVolume, parseReps, getActiveTemplates, getRestDays, buildWeek, weekProgress } from '../lib/utils';
+import {
+  getGreeting, getRelativeTime, calculateStreak, calculateVolume, parseReps, getActiveTemplates, getRestDays, buildWeek, weekProgress,
+  isCardio, cardioMinutes, cardioBests, formatDistance, formatPace, formatDuration,
+} from '../lib/utils';
 import { readStore } from '../lib/offline';
 
 const quotes = [
@@ -141,6 +144,9 @@ export default function Home({ session }) {
   // Analytics State
   const [volumeData, setVolumeData] = useState([]);
   const [top1RMs, setTop1RMs] = useState([]);
+  const [cardioData, setCardioData] = useState([]);
+  const [bestEfforts, setBestEfforts] = useState([]);
+  const [doesLifting, setDoesLifting] = useState(true);
 
   useEffect(() => {
     setQuote(quotes[Math.floor(Math.random() * quotes.length)]);
@@ -227,7 +233,7 @@ export default function Home({ session }) {
     // Fetch all workouts to calculate stats
     const { data: allWorkouts } = await supabase
       .from('workouts')
-      .select('id, completed, completed_at, is_rest_day, day_of_week, created_at, routine_name, exercises(sets, reps, weight, logged_sets)')
+      .select('id, completed, completed_at, is_rest_day, day_of_week, created_at, routine_name, exercises(sets, reps, weight, minutes, logged_sets, kind, activity, distance_km, duration_seconds)')
       .eq('user_id', session.user.id);
 
     let streak = 0;
@@ -280,6 +286,17 @@ export default function Home({ session }) {
         recentVolumes.sort((a, b) => a.dateObj - b.dateObj);
         setVolumeData(recentVolumes);
       }
+
+      // 6. Cardio: minutes in the last 14 workouts that had cardio, and best efforts per activity.
+      // Lifting sections only hide for people who do cardio and never lift.
+      const withCardio = completedHistory.filter(w => w.completed_at && cardioMinutes(w.exercises) > 0);
+      setCardioData(withCardio.slice(0, 14).reverse().map(w => ({
+        date: new Date(w.completed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        minutes: cardioMinutes(w.exercises),
+      })));
+      const exercisesDone = completedHistory.flatMap(w => w.exercises || []);
+      setBestEfforts(cardioBests(exercisesDone).slice(0, 4));
+      setDoesLifting(withCardio.length === 0 || exercisesDone.some(ex => !isCardio(ex)));
     }
 
     setStats(prev => ({
@@ -288,7 +305,7 @@ export default function Home({ session }) {
       currentStreak: streak
     }));
 
-    // 6. Fetch 1RMs
+    // 7. Fetch 1RMs
     const { data: allExercises } = await supabase
       .from('exercises')
       .select('name, weight, reps, workouts!inner(completed)')
@@ -509,6 +526,7 @@ export default function Home({ session }) {
         </section>
 
         {/* Volume */}
+        {doesLifting && (
         <section className="home-section" aria-labelledby="volume-title">
           <div className="section-head">
             <h2 id="volume-title" className="section-title">Volume</h2>
@@ -550,9 +568,10 @@ export default function Home({ session }) {
             </div>
           </div>
         </section>
+        )}
 
         {/* Best lifts */}
-        {top1RMs.length > 0 && (
+        {doesLifting && top1RMs.length > 0 && (
           <section className="home-section" aria-labelledby="lifts-title">
             <div className="section-head">
               <h2 id="lifts-title" className="section-title">Best lifts</h2>
@@ -565,6 +584,54 @@ export default function Home({ session }) {
                   <span className="list-row-value num">{item.rm} kg</span>
                 </li>
               ))}
+            </ul>
+          </section>
+        )}
+
+        {/* Cardio: minutes per workout */}
+        {cardioData.length > 0 && (
+          <section className="home-section" aria-labelledby="cardio-title">
+            <div className="section-head">
+              <h2 id="cardio-title" className="section-title">Cardio</h2>
+              <p className="section-note">Last {cardioData.length} sessions, minutes</p>
+            </div>
+            <div className="panel">
+              <div className="chart">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={cardioData} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+                    <CartesianGrid stroke="var(--divider)" vertical={false} />
+                    <XAxis dataKey="date" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={24} />
+                    <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} width={36} allowDecimals={false} />
+                    <Tooltip content={<ChartTip unit="min" />} cursor={{ fill: 'var(--bg-hover)' }} />
+                    <Bar dataKey="minutes" fill="var(--accent)" radius={[4, 4, 0, 0]} maxBarSize={24} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* Cardio best efforts: longest distance and fastest pace per activity */}
+        {bestEfforts.length > 0 && (
+          <section className="home-section" aria-labelledby="efforts-title">
+            <div className="section-head">
+              <h2 id="efforts-title" className="section-title">Best efforts</h2>
+              <p className="section-note">Longest and fastest</p>
+            </div>
+            <ul className="grouped-list">
+              {bestEfforts.map(best => {
+                const value = best.longestKm > 0
+                  ? [formatDistance(best.activity, best.longestKm),
+                     best.fastest && formatPace(best.activity, best.fastest.distance_km, best.fastest.duration_seconds)]
+                    .filter(Boolean).join(' · ')
+                  : formatDuration(best.longestSeconds);
+                return (
+                  <li key={best.key} className="list-row">
+                    <span className="list-row-main">{best.label}</span>
+                    <span className="list-row-value num">{value}</span>
+                  </li>
+                );
+              })}
             </ul>
           </section>
         )}

@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateStreak, calculateVolume, parseReps, getActiveTemplates, getRestDays, getLevelProgress, workoutCompletedAt, lastPerformanceByName, plannedSetDrafts, formatSet, buildWeek, storedSessionStatus, untickSession, weekProgress, weekRearrangement, isCardio, parseDuration, formatDuration, formatPace, cardioComparison, lastCardioByName, formatCardioTarget, activityFromName, distanceToKm } from './utils.js';
+import { calculateStreak, calculateVolume, parseReps, getActiveTemplates, getRestDays, getLevelProgress, workoutCompletedAt, lastPerformanceByName, plannedSetDrafts, formatSet, buildWeek, storedSessionStatus, untickSession, weekProgress, weekRearrangement, isCardio, parseDuration, formatDuration, formatPace, cardioComparison, lastCardioByName, formatCardioTarget, activityFromName, distanceToKm, cardioMinutes, cardioBests, cardioPRs, intervalState, cardioBadgeStats, getEarnedAchievements } from './utils.js';
 
 // Fixed "today": Saturday 17 Oct 2026, noon local time
 beforeEach(() => mock.timers.enable({ apis: ['Date'], now: new Date(2026, 9, 17, 12) }));
@@ -279,4 +279,55 @@ test('formatCardioTarget and activityFromName', () => {
   assert.equal(activityFromName('Bench press'), null);
   assert.equal(distanceToKm('swim', '1500'), 1.5);
   assert.equal(distanceToKm('run', '5'), 5);
+});
+
+test('cardioMinutes: exact seconds, or minutes on older rows; lifts ignored', () => {
+  assert.equal(cardioMinutes([
+    { kind: 'cardio', duration_seconds: 1510 },
+    { sets: 0, minutes: 10 },
+    { sets: 3, reps: '5', weight: 100 },
+  ]), 35);
+});
+
+test('cardioBests: longest distance and fastest pace per activity; short efforts do not count for pace', () => {
+  const rows = [
+    { kind: 'cardio', activity: 'run', distance_km: 5, duration_seconds: 1500 },   // 5:00 /km
+    { kind: 'cardio', activity: 'run', distance_km: 10, duration_seconds: 3300 },  // 5:30 /km
+    { kind: 'cardio', activity: 'run', distance_km: 0.4, duration_seconds: 90 },   // too short for pace
+    { kind: 'cardio', activity: 'hiit', duration_seconds: 1200 },
+  ];
+  const [run, hiit] = cardioBests(rows);
+  assert.equal(run.label, 'Run');
+  assert.equal(run.longestKm, 10);
+  assert.deepEqual(run.fastest, { distance_km: 5, duration_seconds: 1500 });
+  assert.equal(hiit.fastest, null);
+  assert.equal(hiit.longestSeconds, 1200);
+});
+
+test('cardioPRs: longest distance and fastest pace; none on a first session', () => {
+  const past = [{ kind: 'cardio', activity: 'run', distance_km: 5, duration_seconds: 1500 }];
+  assert.deepEqual(cardioPRs({ name: 'Run', activity: 'run', distance_km: 6, duration_seconds: 1740 }, past), [
+    { name: 'Run', text: 'longest 6 km' },
+    { name: 'Run', text: 'fastest 4:50 /km' },
+  ]);
+  assert.deepEqual(cardioPRs({ name: 'Run', activity: 'run', distance_km: 4, duration_seconds: 1500 }, past), []);
+  assert.deepEqual(cardioPRs({ name: 'Run', activity: 'run', distance_km: 6, duration_seconds: 1500 }, []), []);
+});
+
+test('intervalState: work, rest, rounds, and no rest after the last round', () => {
+  const iv = { work: 30, rest: 15, rounds: 3 };
+  assert.deepEqual(intervalState(iv, 0), { done: false, total: 120, round: 1, phase: 'work', remaining: 30 });
+  assert.deepEqual(intervalState(iv, 35), { done: false, total: 120, round: 1, phase: 'rest', remaining: 10 });
+  assert.deepEqual(intervalState(iv, 100), { done: false, total: 120, round: 3, phase: 'work', remaining: 20 });
+  assert.equal(intervalState(iv, 120).done, true);
+});
+
+test('cardio badges: 5K and 10K runs, an hour of cardio', () => {
+  const stats = cardioBadgeStats([
+    { kind: 'cardio', activity: 'run', distance_km: 10.2, duration_seconds: 3700 },
+    { kind: 'cardio', activity: 'cycle', distance_km: 30, duration_seconds: 3000 },
+  ]);
+  assert.deepEqual(stats, { longestRunKm: 10.2, longestCardioMinutes: 3700 / 60 });
+  const earned = getEarnedAchievements(stats, [{ badge_name: 'First 5K' }]).map(a => a.badge_name);
+  assert.deepEqual(earned, ['Double Digits', 'Hour of Power']);
 });

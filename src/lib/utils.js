@@ -186,6 +186,70 @@ export function lastCardioByName(rows) {
   return byName;
 }
 
+// Cardio seconds of one row: the exact time, or whole minutes on older rows
+const cardioSeconds = (ex) => ex.duration_seconds ?? (parseInt(ex.minutes) || 0) * 60;
+
+// Minutes of cardio in one workout
+export const cardioMinutes = (exercises) =>
+  Math.round((exercises || []).filter(isCardio).reduce((sum, ex) => sum + cardioSeconds(ex), 0) / 60);
+
+// Pace only counts over a real distance: 1 km (500 m rowing, 100 m swimming), so a sprint to the bus isn't a PR
+const paceMinKm = (activity) => activity.pace === 'kmh' ? 1 : activity.pace / 1000;
+const speedOf = (row) => (parseFloat(row.distance_km) || 0) / (cardioSeconds(row) / 3600);
+
+// Best efforts per activity (rows without one are grouped by name), from finished cardio rows.
+// [{ key, label, activity, longestKm, fastest: row | null, longestSeconds }], most sessions first.
+export function cardioBests(rows) {
+  const groups = {};
+  for (const row of rows || []) {
+    if (!isCardio(row)) continue;
+    const activity = getActivity(row.activity);
+    const key = row.activity || `name:${row.name?.trim().toLowerCase()}`;
+    const g = groups[key] ??= { key, label: activity?.label ?? row.name, activity: row.activity ?? null, sessions: 0, longestKm: 0, fastest: null, longestSeconds: 0 };
+    const km = parseFloat(row.distance_km) || 0;
+    const seconds = cardioSeconds(row);
+    g.sessions++;
+    g.longestKm = Math.max(g.longestKm, km);
+    g.longestSeconds = Math.max(g.longestSeconds, seconds);
+    if (activity?.pace && km >= paceMinKm(activity) && seconds > 0 && (!g.fastest || speedOf(row) > speedOf(g.fastest))) {
+      g.fastest = { distance_km: km, duration_seconds: seconds };
+    }
+  }
+  return Object.values(groups).sort((a, b) => b.sessions - a.sessions);
+}
+
+// Cardio PRs for one finished exercise against earlier sessions of the same activity.
+// Nothing on the first session: there's nothing to beat yet (same as lifting PRs).
+export function cardioPRs(ex, pastRows) {
+  const past = cardioBests(pastRows)[0];
+  if (!past) return [];
+  const activity = getActivity(ex.activity);
+  const km = parseFloat(ex.distance_km) || 0;
+  const seconds = ex.duration_seconds || 0;
+  const label = activity?.label ?? ex.name;
+  const prs = [];
+  if (activity?.distance && km > 0 && past.longestKm > 0 && km > past.longestKm) {
+    prs.push({ name: label, text: `longest ${formatDistance(ex.activity, km)}` });
+  }
+  if (activity?.pace && past.fastest && km >= paceMinKm(activity) && seconds > 0
+      && speedOf({ distance_km: km, duration_seconds: seconds }) > speedOf(past.fastest)) {
+    prs.push({ name: label, text: `fastest ${formatPace(ex.activity, km, seconds)}` });
+  }
+  return prs;
+}
+
+// HIIT timer: where you are after `elapsed` seconds of rounds of work/rest. No rest after the last round.
+export function intervalState({ work, rest, rounds }, elapsed) {
+  const total = rounds * work + (rounds - 1) * rest;
+  if (elapsed >= total) return { done: true, total, round: rounds, phase: 'work', remaining: 0 };
+  const cycle = work + rest;
+  const round = Math.floor(elapsed / cycle) + 1;
+  const into = elapsed - (round - 1) * cycle;
+  return into < work
+    ? { done: false, total, round, phase: 'work', remaining: work - into }
+    : { done: false, total, round, phase: 'rest', remaining: cycle - into };
+}
+
 // When a finished workout is dated: the day it was started, even if Finish is pressed after midnight.
 // Past that day it uses the last time something was logged, capped at 23:59:59.999 of the start day.
 export function workoutCompletedAt(startedAt, lastActivityAt, now = new Date()) {
@@ -393,7 +457,19 @@ export const AVAILABLE_ACHIEVEMENTS = [
   { id: 'streak_7', badge_name: 'Unstoppable', description: 'Hit a 7-day streak.', condition: (stats) => stats.currentStreak >= 7 },
   { id: 'level_5', badge_name: 'Rising Star', description: 'Reach Level 5.', condition: (stats) => stats.level >= 5 },
   { id: 'volume_10k', badge_name: 'Heavy Lifter', description: 'Move 10,000kg total volume in a single workout.', condition: (stats) => stats.maxVolume >= 10000 },
+  { id: 'run_5k', badge_name: 'First 5K', description: 'Run 5 km in one go.', condition: (stats) => stats.longestRunKm >= 5 },
+  { id: 'run_10k', badge_name: 'Double Digits', description: 'Run 10 km in one go.', condition: (stats) => stats.longestRunKm >= 10 },
+  { id: 'cardio_60', badge_name: 'Hour of Power', description: 'Do 60 minutes of cardio in one session.', condition: (stats) => stats.longestCardioMinutes >= 60 },
 ];
+
+// Badge stats from one finished workout's cardio
+export function cardioBadgeStats(exercises) {
+  const cardio = (exercises || []).filter(isCardio);
+  return {
+    longestRunKm: Math.max(0, ...cardio.filter(ex => ex.activity === 'run').map(ex => parseFloat(ex.distance_km) || 0)),
+    longestCardioMinutes: Math.max(0, ...cardio.map(ex => cardioSeconds(ex) / 60)),
+  };
+}
 
 export function getEarnedAchievements(stats, existingAchievements = []) {
   const existingIds = new Set(existingAchievements.map(a => a.badge_name));

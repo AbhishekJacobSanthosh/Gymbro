@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { calculateVolume, calculateStreak, getActiveTemplates, getRestDays, getEarnedAchievements } from './utils';
+import { calculateVolume, calculateStreak, getActiveTemplates, getRestDays, getEarnedAchievements, isCardio, cardioPRs, cardioBadgeStats } from './utils';
 
 // Saves one finished workout (workout + exercises + template update + XP in a single database
 // transaction), then checks PRs, badges and posts to the feed. Used by the outbox and by Calendar.
@@ -28,8 +28,22 @@ export async function submitWorkout(userId, op) {
   // A retry of a workout that was already saved: its bonuses were handled the first time
   if (data.already_saved) return result;
 
-  // --- PR CHECK: best weight from other finished workouts ---
+  // --- PR CHECK: best weight from other finished workouts. prsHit: [{ name, text }] ---
   await Promise.all(op.exercises.map(async (ex) => {
+    if (isCardio(ex)) {
+      // Cardio: longest distance and fastest pace against earlier sessions of the same activity
+      if (!ex.activity || !(ex.distance_km > 0)) return;
+      const { data: past } = await supabase
+        .from('exercises')
+        .select('kind, sets, minutes, activity, distance_km, duration_seconds, workouts!inner(user_id, completed)')
+        .eq('activity', ex.activity)
+        .eq('workouts.user_id', userId)
+        .eq('workouts.completed', true)
+        .neq('workout_id', result.workoutId)
+        .gt('distance_km', 0);
+      result.prsHit.push(...cardioPRs(ex, past || []));
+      return;
+    }
     const weight = parseFloat(ex.weight) || 0;
     if (!ex.name || weight <= 0) return;
 
@@ -45,7 +59,7 @@ export async function submitWorkout(userId, op) {
 
     const pastMax = pastEx?.length ? parseFloat(pastEx[0].weight) : 0;
     if (weight > pastMax && pastMax > 0) {
-      result.prsHit.push({ name: ex.name, weight });
+      result.prsHit.push({ name: ex.name, text: `${weight} kg` });
     }
   }));
 
@@ -60,7 +74,8 @@ export async function submitWorkout(userId, op) {
     totalWorkouts: completedHistory.length,
     currentStreak: calculateStreak(completedHistory, getRestDays(getActiveTemplates(allWorkouts)), 3).streak,
     level: data.new_level,
-    maxVolume: calculateVolume(op.exercises)
+    maxVolume: calculateVolume(op.exercises),
+    ...cardioBadgeStats(op.exercises),
   };
 
   const { data: existingAchievements } = await supabase.from('achievements').select('badge_name').eq('user_id', userId);
@@ -83,7 +98,7 @@ export async function submitWorkout(userId, op) {
   const retroSuffix = retro ? ' retroactively' : '';
   let feedAction = `crushed ${retro ? 'a retroactive' : 'their'} ${cleanRoutineName}! (+${xp} XP)`;
   if (result.prsHit.length > 0) {
-    const prText = result.prsHit.map(pr => `${pr.name} (${pr.weight}kg)`).join(', ');
+    const prText = result.prsHit.map(pr => `${pr.name} (${pr.text})`).join(', ');
     feedAction = `hit a PR on ${prText}${retroSuffix}! (+${xp} XP)`;
   } else if (result.earnedAchievements.length > 0) {
     feedAction = `earned the ${result.earnedAchievements[0].badge_name} badge${retroSuffix}! (+${xp} XP)`;

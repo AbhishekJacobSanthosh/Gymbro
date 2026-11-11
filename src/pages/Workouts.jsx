@@ -6,7 +6,7 @@ import { useToast } from '../App';
 import {
   getActiveTemplates, workoutCompletedAt, lastPerformanceByName, plannedSetDrafts, formatSet, storedSessionStatus, untickSession,
   isCardio, getActivity, ACTIVITIES, EFFORTS, activityFromName, parseDuration, formatDuration, formatPace, formatDistance,
-  cardioComparison, lastCardioByName, formatCardioTarget, cardioTargetSeconds, distanceToKm,
+  cardioComparison, lastCardioByName, formatCardioTarget, cardioTargetSeconds, distanceToKm, intervalState,
 } from '../lib/utils';
 import { readStore, writeStore, enqueueWorkout, removeQueued, flushOutbox } from '../lib/offline';
 
@@ -151,12 +151,17 @@ export default function Workouts({ session }) {
   const [rest, setRest] = useState(() => readStore(userId, 'rest', null));
   const [restSeconds, setRestSeconds] = useState(() => readStore(userId, 'restSeconds', DEFAULT_REST_SECONDS));
   const [restOver, setRestOver] = useState(false);
+  // HIIT interval timer: { key, startedAt, work, rest, rounds }, kept on the phone like the rest timer.
+  // It runs the exercise's stopwatch, so the time logged is the time the intervals ran.
+  const [intervalRun, setIntervalRun] = useState(() => readStore(userId, 'intervals', null));
+  const [intervalsOver, setIntervalsOver] = useState(false);
   const [, setTick] = useState(0);
   const now = Date.now();
   const restRemaining = rest ? Math.ceil((rest.endsAt - now) / 1000) : 0;
   const elapsed = workout.startedAt && !startedEarlierDay ? (now - new Date(workout.startedAt).getTime()) / 1000 : null;
+  const iv = intervalRun ? intervalState(intervalRun, (now - intervalRun.startedAt) / 1000) : null;
 
-  const needsClock = !!rest || elapsed !== null || exercises.some(ex => ex.running_since);
+  const needsClock = !!rest || elapsed !== null || !!intervalRun || exercises.some(ex => ex.running_since);
   useEffect(() => {
     if (!needsClock) return;
     const interval = setInterval(() => setTick(t => t + 1), 1000);
@@ -192,6 +197,57 @@ export default function Workouts({ session }) {
     const timeout = setTimeout(() => setRestOver(false), 4000);
     return () => clearTimeout(timeout);
   }, [restFinished]);
+
+  const saveIntervalRun = (next) => {
+    setIntervalRun(next);
+    writeStore(userId, 'intervals', next);
+  };
+  const startIntervals = (key, intervals) => {
+    const at = Date.now();
+    clearRest();
+    setIntervalsOver(false);
+    updateExercise(key, ex => ({ ...ex, running_since: at, duration_seconds: null, time_text: null, completed: false }));
+    saveIntervalRun({ key, startedAt: at, work: intervals.work, rest: intervals.rest || 0, rounds: intervals.rounds });
+  };
+  // Stopping pauses the stopwatch; the time so far stays logged
+  const stopIntervals = () => {
+    if (intervalRun) updateExercise(intervalRun.key, ex => ex.running_since
+      ? { ...ex, running_since: null, duration_seconds: Math.round(clockSeconds(ex)) } : ex);
+    saveIntervalRun(null);
+  };
+
+  // A buzz when work turns to rest and back (Android only)
+  const phaseKey = iv && !iv.done ? `${iv.round}-${iv.phase}` : null;
+  const lastPhaseKey = useRef(phaseKey);
+  useEffect(() => {
+    if (phaseKey && lastPhaseKey.current && phaseKey !== lastPhaseKey.current) {
+      navigator.vibrate?.(iv.phase === 'work' ? [300] : [150, 80, 150]);
+    }
+    lastPhaseKey.current = phaseKey;
+  }, [phaseKey]);
+
+  // All rounds done (maybe while the phone was locked): log exactly the planned time
+  // (waits for the stored workout to load, or the update would land on an empty one)
+  const intervalsDone = !!iv?.done;
+  useEffect(() => {
+    if (!intervalsDone || loading) return;
+    navigator.vibrate?.([400, 100, 400]);
+    const { key } = intervalRun;
+    updateExercise(key, ex => ({ ...ex, running_since: null, duration_seconds: iv.total }), { activity: false });
+    saveIntervalRun(null);
+    setIntervalsOver(true);
+  }, [intervalsDone, loading]);
+  useEffect(() => {
+    if (!intervalsOver) return;
+    const timeout = setTimeout(() => setIntervalsOver(false), 4000);
+    return () => clearTimeout(timeout);
+  }, [intervalsOver]);
+
+  // Pausing, ticking, resetting, removing the exercise or ending the workout also ends the intervals
+  const intervalExRunning = !!intervalRun && !!exercises.find(ex => ex.key === intervalRun.key)?.running_since;
+  useEffect(() => {
+    if (!loading && intervalRun && !intervalsDone && !intervalExRunning) saveIntervalRun(null);
+  }, [loading, intervalRun, intervalsDone, intervalExRunning]);
 
   useEffect(() => {
     loadWorkout();
@@ -699,6 +755,8 @@ export default function Workouts({ session }) {
     const lastText = last && [formatDistance(ex.activity, last.distance_km), last.duration_seconds && formatDuration(last.duration_seconds)]
       .filter(Boolean).join(' in ');
     const comparison = !running && cardioComparison(ex.activity, { distance_km: km, duration_seconds: seconds }, last);
+    const plannedIntervals = ex.target?.intervals?.rounds > 0 && ex.target.intervals.work > 0 ? ex.target.intervals : null;
+    const intervalsHere = intervalRun?.key === ex.key;
     const setField = (field) => (e) => updateExercise(ex.key, x => ({ ...x, [field]: e.target.value }));
 
     return (
@@ -724,8 +782,11 @@ export default function Workouts({ session }) {
             readOnly={running}
             aria-label={`${ex.name} time, minutes:seconds`}
           />
-          <button className={`btn ${running ? 'btn-secondary' : 'btn-primary'} cardio-start`} onClick={() => toggleStopwatch(ex.key)}>
-            {running ? <><Pause size={18} /> Pause</> : <><Play size={18} /> {seconds > 0 ? 'Resume' : 'Start'}</>}
+          <button className={`btn ${running ? 'btn-secondary' : 'btn-primary'} cardio-start`}
+            onClick={() => running || !plannedIntervals ? toggleStopwatch(ex.key) : startIntervals(ex.key, plannedIntervals)}>
+            {running
+              ? <><Pause size={18} /> {intervalsHere ? 'Stop' : 'Pause'}</>
+              : <><Play size={18} /> {plannedIntervals ? 'Intervals' : seconds > 0 ? 'Resume' : 'Start'}</>}
           </button>
         </div>
         {!running && seconds > 0 && (
@@ -796,7 +857,7 @@ export default function Workouts({ session }) {
           <div className="celebrate-card">
             <Trophy size={56} />
             <h2>{prMessages.length > 0 ? 'New PR' : 'Badge unlocked'}</h2>
-            {prMessages.length > 0 && <p>{prMessages.map(pr => `${pr.name}: ${pr.weight} kg`).join(', ')}</p>}
+            {prMessages.length > 0 && <p>{prMessages.map(pr => `${pr.name}: ${pr.text ?? `${pr.weight} kg`}`).join(', ')}</p>}
           </div>
         </div>
       )}
@@ -1029,6 +1090,20 @@ export default function Workouts({ session }) {
 
       {showDock && (
         <div className="today-dock">
+          {iv && !iv.done && (
+            <div className={`rest-bar interval-bar is-${iv.phase}`} role="timer" aria-live="off">
+              <span className="rest-label">{iv.phase === 'work' ? 'Work' : 'Rest'}</span>
+              <span className="rest-time num">{formatClock(Math.ceil(iv.remaining))}</span>
+              <span className="interval-round num">{iv.round}/{intervalRun.rounds}</span>
+              <button className="rest-button" onClick={stopIntervals}>Stop</button>
+            </div>
+          )}
+          {intervalsOver && (
+            <div className="rest-bar is-over" role="status">
+              <span className="rest-label">Intervals</span>
+              <span className="rest-time">Done</span>
+            </div>
+          )}
           {(rest || restOver) && (
             <div className={`rest-bar ${restOver ? 'is-over' : ''}`} role="timer" aria-live="off">
               <span className="rest-label">{restOver ? 'Rest over' : 'Rest'}</span>

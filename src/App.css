@@ -953,6 +953,17 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* HIIT intervals: same bar, the phase label in the accent while working */
+.interval-bar.is-work .rest-label {
+  color: var(--accent);
+}
+
+.interval-round {
+  color: var(--text-secondary);
+  font-size: 0.9375rem;
+  padding-right: var(--space-1);
+}
+
 .rest-bar.is-over {
   background: var(--accent);
   border-color: transparent;
