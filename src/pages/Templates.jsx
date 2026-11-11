@@ -233,9 +233,11 @@ export default function Templates({ session }) {
   };
 
   // Cardio targets: each edit saves every field it affects, and the row shows the saved values
+  // kind is saved too: an older row (no kind) would otherwise turn back into a lift once its minutes are 0
   const saveCardio = async (ex, changes) => {
-    setExercises(prev => prev.map(e => e.id === ex.id ? { ...e, ...changes, distance_input: undefined } : e));
-    const { error } = await supabase.from('exercises').update(changes).eq('id', ex.id);
+    const update = { kind: 'cardio', ...changes };
+    setExercises(prev => prev.map(e => e.id === ex.id ? { ...e, ...update, distance_input: undefined } : e));
+    const { error } = await supabase.from('exercises').update(update).eq('id', ex.id);
     if (error) toast?.error(`Couldn't save ${ex.name}. Check your connection.`);
   };
   const saveCardioMinutes = (ex, value) => {
@@ -243,9 +245,12 @@ export default function Templates({ session }) {
     saveCardio(ex, { minutes, duration_seconds: minutes * 60 || null });
   };
   const saveCardioDistance = (ex, value) => saveCardio(ex, { distance_km: distanceToKm(ex.activity, value) });
+  // Saved box by box, so a half-filled plan (rounds typed, seconds not yet) is kept, not wiped
   const saveIntervals = (ex) => {
-    const intervals = intervalsFrom(ex.intervals || {});
-    saveCardio(ex, { intervals, minutes: intervalMinutes(intervals), duration_seconds: null });
+    const iv = ex.intervals || {};
+    const parts = { rounds: parseInt(iv.rounds) || 0, work: parseInt(iv.work) || 0, rest: parseInt(iv.rest) || 0 };
+    const any = parts.rounds || parts.work || parts.rest;
+    saveCardio(ex, { intervals: any ? parts : null, minutes: intervalMinutes(intervalsFrom(parts)), duration_seconds: null });
   };
   const changeActivity = (ex, activity) => saveCardio(ex, {
     activity: activity || null,
