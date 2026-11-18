@@ -1,4 +1,4 @@
-# GymBro
+# ELEV8
 
 Workout tracker for dedicated pros with: weekly templates, set-by-set logging, streaks with monthly shields, XP/levels, PRs, badges, a shared calendar and an activity feed.
 

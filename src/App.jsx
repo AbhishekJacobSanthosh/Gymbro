@@ -96,7 +96,7 @@ function Sidebar({ onLogout }) {
     <aside className="sidebar">
       <div className="sidebar-brand">
         <Dumbbell className="sidebar-brand-icon" size={26} />
-        <span className="sidebar-brand-text">GymBro</span>
+        <span className="sidebar-brand-text">ELEV8</span>
       </div>
 
       <nav className="sidebar-nav">
@@ -146,8 +146,8 @@ function SyncStatus({ userId, online }) {
   useEffect(() => {
     const update = () => setPending({ queued: getQueued(userId).length, failed: getFailed(userId).length });
     update();
-    window.addEventListener('gymbro:outbox', update);
-    return () => window.removeEventListener('gymbro:outbox', update);
+    window.addEventListener('elev8:outbox', update);
+    return () => window.removeEventListener('elev8:outbox', update);
   }, [userId]);
 
   // Upload on open, when signal comes back, and when the app returns to the foreground
@@ -181,8 +181,8 @@ function SyncStatus({ userId, online }) {
         setTimeout(() => toast.success(`🏅 Achievement Unlocked: ${ach.badge_name}!`), 1000);
       });
     };
-    window.addEventListener('gymbro:synced', onSynced);
-    return () => window.removeEventListener('gymbro:synced', onSynced);
+    window.addEventListener('elev8:synced', onSynced);
+    return () => window.removeEventListener('elev8:synced', onSynced);
   }, [toast]);
 
   if (pending.queued === 0 && pending.failed === 0) return null;
@@ -222,7 +222,7 @@ function LoadingScreen() {
 
 // ---- App ----
 // The last signed-in user, so the app still opens offline after the login token expires
-const LAST_USER_KEY = 'gymbro:lastUser';
+const LAST_USER_KEY = 'gymbro:lastUser'; // old app name kept: renaming it would sign out offline users
 function readLastUser() {
   try { return JSON.parse(localStorage.getItem(LAST_USER_KEY)); } catch { return null; }
 }

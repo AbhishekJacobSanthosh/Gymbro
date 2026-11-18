@@ -1,6 +1,7 @@
 import { submitWorkout } from './awardWorkout';
 
 // Per-user data kept on the phone so the Today page works without signal.
+// Keys keep the app's old name (gymbro): renaming them would lose workouts already saved on phones.
 const storageKey = (userId, name) => `gymbro:${name}:${userId}`;
 
 export function readStore(userId, name, fallback) {
@@ -22,7 +23,7 @@ export function writeStore(userId, name, value) {
 }
 
 // ---- Outbox: finished workouts waiting to reach Supabase ----
-const notify = () => window.dispatchEvent(new Event('gymbro:outbox'));
+const notify = () => window.dispatchEvent(new Event('elev8:outbox'));
 
 export const getQueued = (userId) => readStore(userId, 'outbox', []);
 export const getFailed = (userId) => readStore(userId, 'failed', []);
@@ -86,7 +87,7 @@ export function flushOutbox(userId) {
           const last = readStore(userId, 'lastFinished', null);
           if (last?.clientId === op.clientId) writeStore(userId, 'lastFinished', { ...last, workoutId: result.workoutId });
           // A retry of an already-saved workout (e.g. a stuck run finishing late) doesn't celebrate twice
-          if (!result.alreadySaved) window.dispatchEvent(new CustomEvent('gymbro:synced', { detail: result }));
+          if (!result.alreadySaved) window.dispatchEvent(new CustomEvent('elev8:synced', { detail: result }));
         }
         notify();
         if (getQueued(userId)[0]?.clientId === op.clientId) break; // storage refused the write; don't loop forever

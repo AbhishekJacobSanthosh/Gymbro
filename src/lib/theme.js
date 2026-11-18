@@ -1,7 +1,7 @@
 // The user's colour becomes the app's accent. Colours too dark to read on black are
 // lightened until they are, so any pick stays usable (links, ticks, buttons).
 export const DEFAULT_ACCENT = '#ff7854';
-const STORAGE_KEY = 'gymbro:accent';
+const STORAGE_KEY = 'gymbro:accent'; // old app name kept: renaming it would reset everyone's saved colour
 
 export function normalizeHex(value) {
   const match = /^#?([0-9a-f]{6})$/i.exec(String(value ?? '').trim());

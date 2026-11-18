@@ -1,7 +1,7 @@
-// Service worker: keeps the app's own files on the phone so GymBro opens without signal.
+// Service worker: keeps the app's own files on the phone so ELEV8 opens without signal.
 // Supabase requests are never cached; the Today page keeps its data in localStorage instead.
 // shortcut: hand-rolled cache with no build-time file list; switch to vite-plugin-pwa (Workbox) if caching needs grow.
-const CACHE = 'gymbro-v1';
+const CACHE = 'elev8-v1';
 const NETWORK_TIMEOUT_MS = 3000; // weak gym signal: fall back to the cached app instead of a blank screen
 
 // Caches index.html plus every file it references, and drops files from older builds

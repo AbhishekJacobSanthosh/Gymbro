@@ -270,8 +270,8 @@ export default function Workouts({ session }) {
         setTimeout(() => setShowConfetti(false), 5000);
       }
     };
-    window.addEventListener('gymbro:synced', onSynced);
-    return () => window.removeEventListener('gymbro:synced', onSynced);
+    window.addEventListener('elev8:synced', onSynced);
+    return () => window.removeEventListener('elev8:synced', onSynced);
   }, []);
 
   // Exercise names for suggestions, and what you did last time for the "Last" column

@@ -84,7 +84,7 @@ export default function Login() {
           {/* Brand */}
           <div className="login-brand">
             <Dumbbell className="text-accent" size={36} />
-            <span className="login-brand-text">GymBro</span>
+            <span className="login-brand-text">ELEV8</span>
           </div>
 
           <p className="login-welcome">

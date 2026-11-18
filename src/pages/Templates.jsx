@@ -297,7 +297,7 @@ export default function Templates({ session }) {
     setDraggedIdx(index);
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('application/gymbro-index', index);
+      e.dataTransfer.setData('application/elev8-index', index);
     }
   };
 
